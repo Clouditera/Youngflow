@@ -11,7 +11,7 @@ youngflow /path/to/your-flow/flow.yaml --work-dir /path/to/target
 ```
 your-flow/
 ├── flow.yaml              流水线定义（唯一入口）
-├── init.sh                初始化脚本（可选，约定）
+├── pre-flow.sh            初始化脚本（可选，约定）
 ├── .env                   模型凭证（可选）
 ├── agents/                Agent 身份提示词
 │   └── default.md
@@ -24,16 +24,16 @@ your-flow/
 └── schemas/               YAML Schema（可选）
 ```
 
-## init.sh 约定
+## pre-flow.sh 约定
 
-如果 flow 根目录包含 `init.sh`，用户 clone 后应首先运行它。脚本负责：
+如果 flow 根目录包含 `pre-flow.sh`，用户 clone 后应首先运行它。脚本负责：
 
 1. **准备依赖** — 子模块初始化、扩展 npm install 等
 2. **检查配置** — 验证 .env / 环境变量是否就绪，检测必要工具
 
 ```bash
 cd your-flow/
-./init.sh
+./pre-flow.sh
 ```
 
 脚本应当幂等（重复运行安全），检查失败时以非零退出码退出。
