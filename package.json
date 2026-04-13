@@ -1,0 +1,34 @@
+{
+  "name": "youngflow",
+  "version": "0.1.0",
+  "description": "Generic AI flow runner — LangGraph orchestration + pi CLI execution",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "youngflow": "bin/youngflow.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node bin/youngflow.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@langchain/langgraph": "^0.2",
+    "ajv": "^8.17",
+    "commander": "^13.0",
+    "fast-glob": "^3.3",
+    "js-yaml": "^4.1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0",
+    "@types/node": "^22.0",
+    "typescript": "^5.7",
+    "vitest": "^4.1.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

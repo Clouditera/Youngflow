@@ -1,0 +1,240 @@
+# YoungFlow flow.yaml JSON Schema
+$schema: "http://json-schema.org/draft-07/schema#"
+title: YoungFlow Flow Definition
+description: 定义一个多阶段 AI agent 流水线
+type: object
+
+required:
+  - stages
+
+properties:
+
+  version:
+    type: string
+    enum: ["1.0"]
+
+  # ── 资产目录 ──
+  artifacts:
+    type: object
+    description: Flow 资产目录（相对于 flow.yaml）
+    properties:
+      agents:
+        type: string
+        default: "agents/"
+      skills:
+        type: string
+        default: "skills/"
+      tasks:
+        type: string
+        default: "tasks/"
+      extensions:
+        type: string
+        description: Extension 目录（相对于 flow.yaml）
+      schemas:
+        type: string
+        description: Schema 目录（相对于 flow.yaml，提供 ${schemas} 变量）
+      env_file:
+        type: string
+        default: ".env"
+    additionalProperties: false
+
+  # ── 默认配置 ──
+  defaults:
+    type: object
+    properties:
+      model:
+        type: string
+        description: 默认模型（provider/model-name:effort）
+      max_parallel:
+        type: integer
+        minimum: 1
+        default: 3
+      agent:
+        type: string
+        description: 默认 agent 文件名（相对于 agents 目录）
+      tools:
+        type: array
+        items:
+          type: string
+        description: 可用工具列表（如 read, bash, write, edit）
+      extensions:
+        type: array
+        items:
+          type: string
+        description: 默认 extension 列表（所有 stage 继承）
+      env:
+        type: object
+        additionalProperties:
+          type: string
+        description: 自定义环境变量（传递给 pi CLI 进程）
+    additionalProperties: false
+
+  # ── 输入参数 ──
+  inputs:
+    type: object
+    description: 运行时输入参数，每个 key 生成一个 CLI flag
+    additionalProperties:
+      type: object
+      properties:
+        description:
+          type: string
+        type:
+          type: string
+          enum: [path, str, list]
+          default: str
+        required:
+          type: boolean
+          default: false
+        default:
+          description: 默认值
+      additionalProperties: false
+
+  # ── 阶段列表 ──
+  stages:
+    type: array
+    minItems: 1
+    items:
+      $ref: "#/$defs/stage"
+
+$defs:
+
+  skills_field:
+    type: array
+    items:
+      type: string
+    minItems: 1
+
+  stage:
+    type: object
+    required: [id]
+    properties:
+      id:
+        type: string
+        pattern: "^[a-z][a-z0-9_-]*$"
+      name:
+        type: string
+      type:
+        type: string
+        enum: [single, parallel, map]
+        default: single
+      skills:
+        $ref: "#/$defs/skills_field"
+      task:
+        type: string
+        description: Task 文件路径（相对于 flow_dir）
+      prompt:
+        type: string
+        description: 支持 ${work_dir} / ${output_dir} / ${iterate_file} 等变量
+      timeout:
+        type: integer
+        minimum: 1
+        default: 1800
+      model:
+        type: string
+      agent:
+        type: string
+        description: 覆盖此阶段使用的 agent（相对于 agents 目录）
+      routes:
+        type: array
+        items:
+          $ref: "#/$defs/route"
+        description: 条件路由列表（按声明顺序求值，第一个命中的生效）
+      error_strategy:
+        type: string
+        enum: [stop, continue]
+        default: stop
+      extensions:
+        type: array
+        items:
+          type: string
+        description: 本阶段加载的 extension 列表（名称对应 extensions 目录下的子目录或 .ts 文件）
+      env:
+        type: object
+        additionalProperties:
+          type: string
+        description: 本阶段自定义环境变量（与 defaults.env 合并，stage 优先）
+
+      # parallel 专用
+      tasks:
+        type: array
+        items:
+          $ref: "#/$defs/task"
+
+      # map 专用
+      over:
+        type: string
+        description: Glob 模式（相对于 output_dir）
+      concurrency:
+        type: integer
+        minimum: 1
+
+      # state 提取（所有阶段类型）
+      # 每个 key 是一个规则对象：
+      #   {file: "...", field: "path"}                 → 读 YAML 字段
+      #   {file: "...", keys_of: "path", where: "..."} → 筛选 dict 的键
+      #   {glob: "pattern"}                            → 统计匹配的文件数
+      state:
+        type: object
+        additionalProperties:
+          type: object
+          properties:
+            file:
+              type: string
+              description: YAML 文件路径（相对于 output_dir）
+            field:
+              type: string
+              description: 取字段路径（dotted）
+            keys_of:
+              type: string
+              description: 读取 dict 的父字段路径
+            where:
+              type: string
+              description: 筛选条件，格式 "field op value"
+            glob:
+              type: string
+              description: glob 模式（相对于 output_dir），返回匹配数
+          additionalProperties: false
+
+    additionalProperties: false
+
+  route:
+    type: object
+    required: [to]
+    properties:
+      to:
+        type: string
+        description: 目标阶段 id
+      when:
+        type: string
+        description: "条件表达式，格式: stage_id.key op value（如 profiler.is_valid == false）。引用任意前置 stage 的 state 值或引擎自动注入的 exit_code/duration_ms"
+      max_loops:
+        type: integer
+        minimum: 1
+        description: 最大回路次数（指向当前或之前阶段的路由必填）
+    additionalProperties: false
+
+  task:
+    type: object
+    required: [id, skills]
+    properties:
+      id:
+        type: string
+        pattern: "^[a-z][a-z0-9_-]*$"
+      name:
+        type: string
+      skills:
+        $ref: "#/$defs/skills_field"
+      task:
+        type: string
+      prompt:
+        type: string
+      timeout:
+        type: integer
+        minimum: 1
+        default: 1800
+      output_subdir:
+        type: string
+      when:
+        type: string
+        description: "条件表达式，格式: stage_id.key op value（如 profiler.has_web == true）。条件为 false 时跳过本 task。"
+    additionalProperties: false

@@ -1,0 +1,29 @@
+# Example Flow — 最小可运行示例
+version: "1.0"
+
+artifacts:
+  agents: agents/
+  skills: skills/
+  tasks: tasks/
+
+defaults:
+  model: anthropic/claude-sonnet-4-5
+
+inputs:
+  work_dir:
+    description: "工作目录"
+    type: path
+  output_dir:
+    description: "输出目录"
+    type: path
+
+stages:
+  - id: hello
+    name: Hello World
+    skills:
+      - hello-skill
+    task: hello.md
+    prompt: |
+      工作目录: ${work_dir}
+      输出文件: ${output_dir}/hello/result.txt
+    timeout: 120

@@ -1,0 +1,26 @@
+# Node
+node_modules/
+dist/
+*.tgz
+
+# youngflow runtime
+.workspace/
+.youngflow/
+.pi-agent/
+
+# Flow assets (external, not shipped with engine)
+flows/*
+!flows/README.md
+!flows/example/
+!flows/.env.example
+
+# Env
+*.env
+!flows/.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
