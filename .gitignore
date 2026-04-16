@@ -13,6 +13,7 @@ flows/*
 !flows/README.md
 !flows/example/
 !flows/.env.example
+!flows/vulnhunt/
 
 # Env
 *.env
