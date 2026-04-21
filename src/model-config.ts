@@ -15,9 +15,7 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
-import { getLogger } from "./logger.js";
-
-const logger = getLogger("youngflow.model_config");
+import { debug } from "./logger.js";
 
 const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
 const CUSTOM_PROVIDER = "youngflow";
@@ -57,12 +55,12 @@ export function resolveModelConfig(
   const effort = (env.MODEL_EFFORT ?? "").trim();
 
   if (!proto && !modelName && !apiKey) {
-    logger.info("No model config in .env — using default: %s", defaultModel);
+    debug("model_config", "info", "No model config in .env — using default: %s", defaultModel);
     return { modelString: defaultModel, apiKey: undefined, agentDir: undefined, envVars: {} };
   }
 
   if (!modelName) {
-    logger.warning("LLM_MODEL_NAME not set — using default: %s", defaultModel);
+    debug("model_config", "warning", "LLM_MODEL_NAME not set — using default: %s", defaultModel);
     return { modelString: defaultModel, apiKey: undefined, agentDir: undefined, envVars: {} };
   }
 
@@ -90,7 +88,7 @@ export function resolveModelConfig(
     envVars["PI_CODING_AGENT_DIR"] = agentDir;
   }
 
-  logger.info("Model config: model=%s provider=%s custom=%s agentDir=%s",
+  debug("model_config", "info", "Model config: model=%s provider=%s custom=%s agentDir=%s",
     modelString, provider, isCustom, agentDir ?? "(none)");
 
   return {
@@ -168,7 +166,7 @@ function createAgentDir(opts: {
       // doesn't exist, fine
     }
     symlinkSync(path.resolve(opts.agentsDir), linkPath);
-    logger.debug("Linked agents: %s → %s", linkPath, opts.agentsDir);
+    debug("model_config", "debug", "Linked agents: %s → %s", linkPath, opts.agentsDir);
   }
 
   return agentDir;

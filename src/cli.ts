@@ -14,7 +14,7 @@ import fg from "fast-glob";
 import { parseFlow } from "./spec.js";
 import { Orchestrator } from "./orchestrator.js";
 import * as report from "./report.js";
-import { setLevel, attachFileHandler, LogLevel } from "./logger.js";
+import { setLevel, attachFileHandler, enableJsonLog, logEvent, LogLevel } from "./logger.js";
 
 function loadVersion(): string {
   try {
@@ -61,6 +61,7 @@ export function main(): void {
     console.log(`  ${"--resume".padEnd(25)} Resume from last checkpoint`);
     console.log(`  ${"--max-parallel N".padEnd(25)} Override max parallel`);
     console.log(`  ${"--list-stages".padEnd(25)} List stages and exit`);
+    console.log(`  ${"--json-log".padEnd(25)} Output structured NDJSON to stdout`);
     console.log(`  ${"-V, --version".padEnd(25)} Show version and exit`);
     console.log();
     console.log("Pass a flow.yaml to see flow-specific input options.");
@@ -95,7 +96,8 @@ export function main(): void {
     .option("--resume", "Resume from checkpoint")
     .option("--max-parallel <n>", "Override max parallel", parseInt)
     .option("--list-stages", "List stages and exit")
-    .option("-v, --verbose", "Verbose logging");
+    .option("-v, --verbose", "Verbose logging")
+    .option("--json-log", "Output structured NDJSON to stdout");
 
   // Dynamic flags from flow inputs
   for (const [key, spec] of Object.entries(flowInputsSpec)) {
@@ -183,9 +185,17 @@ async function runFlow(
   flowInputs: Record<string, any>,
   opts: Record<string, any>,
 ): Promise<void> {
-  const spec = parseFlow(flowYaml, opts.until);
   const workDir = flowInputs.work_dir ?? process.cwd();
   const outputDir = flowInputs.output_dir ?? workDir;
+
+  // Setup logging first — before any initialization that may emit events
+  if (opts.verbose) setLevel(LogLevel.DEBUG);
+  if (opts.jsonLog) {
+    enableJsonLog();
+    jsonMode = true;
+  }
+
+  const spec = parseFlow(flowYaml, opts.until);
 
   // Guard: non-resume into existing run
   if (!opts.resume && hasPreviousRun(outputDir)) {
@@ -206,10 +216,19 @@ async function runFlow(
     maxParallel: opts.maxParallel,
   });
 
-  // Setup logging: verbose level + file handler for all module loggers
-  if (opts.verbose) setLevel(LogLevel.DEBUG);
   attachFileHandler(orch.workspace.flowLog);
   setFlowLogPath(orch.workspace.flowLog);
+
+  logEvent({
+    category: "engine",
+    event: "flow_start",
+    flow: flowYaml,
+    work_dir: workDir,
+    output_dir: outputDir,
+    model: orch.model,
+    max_parallel: orch.maxParallel,
+    resume: !!opts.resume,
+  });
 
   log(`🔍 YoungFlow v${VERSION}`);
   log(`   Flow:     ${flowYaml}`);
@@ -230,6 +249,22 @@ async function runFlow(
   const start = Date.now();
   const result = await orch.run();
   const elapsed = ((Date.now() - start) / 1000).toFixed(0);
+
+  const stagesCompleted = result.stageResults.filter(
+    (r: Record<string, any>) => (r.exit_code ?? 0) === 0,
+  ).length;
+  const stagesFailed = result.stageResults.filter(
+    (r: Record<string, any>) => (r.exit_code ?? 0) !== 0 && !r.skipped,
+  ).length;
+
+  logEvent({
+    category: "engine",
+    event: "flow_end",
+    duration_ms: Date.now() - start,
+    stages_total: result.stageResults.length,
+    stages_completed: stagesCompleted,
+    stages_failed: stagesFailed,
+  });
 
   log("");
   log("=".repeat(60));
@@ -302,14 +337,16 @@ function hasPreviousRun(outputDir: string): boolean {
 // Flow-level logging (banner / summary — clean format, no prefix clutter)
 // ---------------------------------------------------------------------------
 
+let jsonMode = false;
+
 function log(msg: string): void {
-  console.error(msg);
-  // Also write to the file handler if attached (via logger.ts attachFileHandler)
-  // We import lazily to avoid circular dependency at module level
+  // In JSON mode, suppress human-readable console output
+  if (!jsonMode) {
+    console.error(msg);
+  }
+  // File log always gets text
   try {
     appendFileSync(
-      // logFilePath is managed by logger.ts; we write here with a clean format
-      // matching Python's _flow logger behavior
       flowLogPath!,
       `${new Date().toISOString().slice(11, 19)} [youngflow.flow] ${msg}\n`,
       "utf-8",

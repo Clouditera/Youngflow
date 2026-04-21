@@ -12,9 +12,8 @@ import fg from "fast-glob";
 const { globSync } = fg;
 import type { EngineConfig } from "./engine-config.js";
 import type { ModelConfig } from "./model-config.js";
-import { getLogger } from "./logger.js";
+import { logEvent, debug } from "./logger.js";
 
-const logger = getLogger("youngflow.runner");
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -151,13 +150,13 @@ export class Runner {
         result = await this.runOnce(config, handler);
       } else {
         const backoff = ec.errorRetryBackoff * 2 ** (retryCount - 1);
-        logger.info("[%s] Retry %s/%s — waiting %ss...",
+        debug("runner", "info", "[%s] Retry %s/%s — waiting %ss...",
           config.stageId, retryCount, ec.errorRetries, backoff.toFixed(0));
         await sleep(backoff * 1000);
 
         const session = lastResult?.sessionFile;
         if (session) {
-          logger.info("[%s] Resuming session: %s", config.stageId, session);
+          debug("runner", "info", "[%s] Resuming session: %s", config.stageId, session);
           result = await this.runOnce(
             {
               ...config,
@@ -177,30 +176,35 @@ export class Runner {
 
       if (kind === ErrorKind.SUCCESS) {
         if (retryCount > 0) {
-          logger.info("[%s] Recovered after %s retry(s)", config.stageId, retryCount);
+          debug("runner", "info", "[%s] Recovered after %s retry(s)", config.stageId, retryCount);
         }
         return result;
       }
       if (kind === ErrorKind.NON_RETRYABLE) {
-        logger.error("[%s] Non-retryable error: %s", config.stageId, result.lastError);
+        debug("runner", "error", "[%s] Non-retryable error: %s", config.stageId, result.lastError);
         return result;
       }
       if (kind === ErrorKind.TIMEOUT) {
-        logger.error("[%s] Timeout — not retrying", config.stageId);
+        debug("runner", "error", "[%s] Timeout — not retrying", config.stageId);
         return result;
       }
 
       retryCount++;
       if (retryCount > ec.errorRetries) {
-        logger.error("[%s] Retryable error after %s attempt(s): %s",
+        debug("runner", "error", "[%s] Retryable error after %s attempt(s): %s",
           config.stageId, retryCount, result.lastError);
         if (result.exitCode === 0) result.exitCode = 3;
         return result;
       }
 
-      logger.warning("[%s] Retryable error (attempt %s/%s): %s",
-        config.stageId, retryCount, ec.errorRetries + 1,
-        result.lastError || "empty response");
+      logEvent({
+        category: "agent",
+        event: "retry",
+        stage: config.stageId,
+        attempt: retryCount,
+        max_attempts: ec.errorRetries + 1,
+        reason: result.lastError || "empty response",
+      });
     }
   }
 
@@ -213,12 +217,12 @@ export class Runner {
     const startMs = Date.now();
 
     const cwd = config.workDir ?? process.cwd();
-    logger.info("[%s] starting pi agent, cwd: %s, cmd:\n%s",
+    debug("runner", "info", "[%s] starting pi agent, cwd: %s, cmd:\n%s",
       stageId, cwd, fmtCmd(cmd));
     if (Object.keys(config.envExtra).length > 0) {
       const envSummary = Object.entries(config.envExtra)
         .map(([k, v]) => `${k}=${v}`).join(", ");
-      logger.info("[%s] env: %s", stageId, envSummary);
+      debug("runner", "info", "[%s] env: %s", stageId, envSummary);
     }
 
     const env = {
@@ -250,14 +254,14 @@ export class Runner {
       const resetIdle = () => {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-          logger.warning("[%s] No output for %ss, killing", stageId, idleTimeoutSec);
+          logEvent({ category: "agent", event: "idle_timeout", stage: stageId, timeout_s: idleTimeoutSec });
           proc.kill();
         }, idleTimeoutSec * 1000);
       };
 
       const idleTimeoutSec = this.engineConfig.idleTimeout;
       timeoutTimer = setTimeout(() => {
-        logger.error("[%s] Timeout after %ss", stageId, config.timeout);
+        logEvent({ category: "agent", event: "timeout", stage: stageId, timeout_s: config.timeout });
         proc.kill();
       }, config.timeout * 1000);
 
@@ -293,14 +297,32 @@ export class Runner {
             const toolName = event.toolName ?? "unknown";
             const args = event.args ?? {};
             toolCalls.push(toolName);
-            logger.info("[%s] [%ss] %s", stageId, elapsedS.toFixed(0), formatTool(toolName, args));
+            const summary = formatTool(toolName, args);
+            logEvent({
+              category: "agent",
+              event: "tool_call",
+              stage: stageId,
+              tool: toolName,
+              args_summary: summary.length > 200 ? summary.slice(0, 200) + "..." : summary,
+              elapsed_s: Math.round(elapsedS),
+              status: "ok",
+            });
             handler?.onToolStart(toolName, args, elapsedS);
           } else if (eventType === "tool_execution_end") {
             const isErr = event.isError ?? false;
             const toolName = event.toolName ?? "";
             if (isErr) {
               const errResult = String(event.result ?? "").slice(0, 200);
-              logger.warning("[%s] [%ss] ❌ %s: %s", stageId, elapsedS.toFixed(0), toolName, errResult);
+              logEvent({
+                category: "agent",
+                event: "tool_call",
+                stage: stageId,
+                tool: toolName,
+                args_summary: "",
+                elapsed_s: Math.round(elapsedS),
+                status: "error",
+                error_summary: errResult,
+              });
               handler?.onToolEnd(toolName, true, errResult, elapsedS);
             }
             if (toolName === "subagent") {
@@ -326,7 +348,13 @@ export class Runner {
             if (stopReason === "error" || errMsgField) {
               apiErrors++;
               lastError = errMsgField || stopReason;
-              logger.error("[%s] [%ss] ❌ API error (%s): %s", stageId, elapsedS.toFixed(0), apiErrors, lastError);
+              logEvent({
+                category: "agent",
+                event: "api_error",
+                stage: stageId,
+                error: lastError ?? "unknown",
+                api_errors_total: apiErrors,
+              });
             }
 
             handler?.onMessageEnd(content, usage, elapsedS);
@@ -336,20 +364,27 @@ export class Runner {
             const maxAttempts = event.maxAttempts ?? "?";
             const delay = event.delayMs ?? 0;
             const err = event.errorMessage ?? "";
-            logger.warning("[%s] [%ss] 🔄 auto-retry %s/%s in %sms: %s",
-              stageId, elapsedS.toFixed(0), attempt, maxAttempts, delay, err);
+            logEvent({
+              category: "agent",
+              event: "auto_retry",
+              stage: stageId,
+              attempt: Number(attempt),
+              max_attempts: Number(maxAttempts),
+              delay_ms: Number(delay),
+              reason: err,
+            });
           } else if (eventType === "auto_retry_end") {
             const success = event.success ?? false;
             const attempt = event.attempt ?? "?";
             if (success) {
-              logger.info("[%s] [%ss] ✓ retry %s succeeded", stageId, elapsedS.toFixed(0), attempt);
+              debug("runner", "info", "[%s] [%ss] ✓ retry %s succeeded", stageId, elapsedS.toFixed(0), attempt);
             } else {
               const finalErr = event.finalError ?? "";
-              logger.error("[%s] [%ss] ❌ retries exhausted: %s", stageId, elapsedS.toFixed(0), finalErr);
+              debug("runner", "error", "[%s] [%ss] ❌ retries exhausted: %s", stageId, elapsedS.toFixed(0), finalErr);
             }
           } else if (eventType === "extension_error") {
             const errMsg = event.message ?? "";
-            logger.warning("[%s] [%ss] ❌ extension: %s", stageId, elapsedS.toFixed(0), errMsg);
+            logEvent({ category: "agent", event: "extension_error", stage: stageId, message: errMsg });
           }
         }
       });
@@ -369,7 +404,7 @@ export class Runner {
         if (stderrData.trim()) {
           for (const line of stderrData.trim().split("\n")) {
             if (line.trim()) {
-              logger.info("[%s] [stderr] %s", stageId, line.trim());
+              debug("runner", "info", "[%s] [stderr] %s", stageId, line.trim());
             }
           }
         }
@@ -396,21 +431,27 @@ export class Runner {
           finalHasContent,
         };
 
-        logger.info(
-          "[%s] DONE: exit=%s duration=%sms turns=%s tools=%s " +
-            "tokens_in=%s tokens_out=%s api_errors=%s retries=%s " +
-            "final_stop=%s final_content=%s",
-          stageId, result.exitCode, durationMs, turnCount,
-          toolCalls.length, totalIn, totalOut, apiErrors, retries,
-          finalStopReason, finalHasContent,
-        );
+        logEvent({
+          category: "stage",
+          event: "stage_done",
+          stage: stageId,
+          exit_code: result.exitCode,
+          duration_ms: durationMs,
+          turns: turnCount,
+          tools: toolCalls.length,
+          tokens_in: totalIn,
+          tokens_out: totalOut,
+          api_errors: apiErrors,
+          retries,
+          final_stop: finalStopReason,
+        });
 
         handler?.onDone(result);
         resolve(result);
       });
 
       proc.on("error", (err) => {
-        logger.error("[%s] stream error: %s", stageId, err);
+        logEvent({ category: "stage", event: "process_error", stage: stageId, error: String(err) });
         if (idleTimer) clearTimeout(idleTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (proc.exitCode === null) proc.kill();
@@ -552,9 +593,9 @@ function exportSessionHtml(sessionFile: string): void {
       timeout: 30000,
       stdio: "ignore",
     });
-    logger.info("[runner] Session exported: %s", htmlPath);
+    debug("runner", "info", "[runner] Session exported: %s", htmlPath);
   } catch {
-    logger.warning("[runner] Failed to export session: %s", sessionFile);
+    debug("runner", "warning", "[runner] Failed to export session: %s", sessionFile);
   }
 }
 
@@ -578,7 +619,7 @@ export function loadEnvFile(envPath?: string): Record<string, string> {
     if (key && value) env[key] = value;
   }
   if (Object.keys(env).length > 0) {
-    logger.info("Loaded %s env vars from %s", Object.keys(env).length, path.basename(envPath));
+    debug("runner", "info", "Loaded %s env vars from %s", Object.keys(env).length, path.basename(envPath));
   }
   return env;
 }

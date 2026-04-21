@@ -15,9 +15,7 @@ import fg from "fast-glob";
 const { globSync } = fg;
 import yaml from "js-yaml";
 import { evaluateExpr } from "./condition.js";
-import { getLogger } from "./logger.js";
-
-const logger = getLogger("youngflow.state");
+import { debug } from "./logger.js";
 
 export class StateExtractionError extends Error {
   key: string;
@@ -69,7 +67,7 @@ export function extractState(
   }
 
   if (state && Object.keys(state).length > 0) {
-    logger.info("Extracted state: %s", JSON.stringify(state));
+    debug("state", "info", "Extracted state: %s", JSON.stringify(state));
   }
   return state;
 }

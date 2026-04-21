@@ -1,37 +1,27 @@
 /**
- * Lightweight logger aligned with Python's logging module.
+ * Unified logging & event system for YoungFlow.
  *
- * Each module gets a named logger via getLogger("youngflow.xxx").
- * Console output goes to stderr; file output (when attached) captures
- * all module logs at DEBUG level for full diagnostics.
+ * Single interface: logEvent(event) — every log call is a typed event.
+ *
+ * Output modes (mutually exclusive on stderr):
+ *   - Default:    human-readable text → stderr
+ *   - --json-log: structured NDJSON   → stderr
+ *
+ * File log (.log) always receives human-readable text regardless of mode.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+
+// ---------------------------------------------------------------------------
+// Log levels
+// ---------------------------------------------------------------------------
 
 export enum LogLevel {
   DEBUG = 10,
   INFO = 20,
   WARNING = 30,
   ERROR = 40,
-}
-
-let globalLevel: LogLevel = LogLevel.INFO;
-let logFilePath: string | undefined;
-// File handler always logs at DEBUG for full diagnostics
-const FILE_LEVEL: LogLevel = LogLevel.DEBUG;
-
-export function setLevel(level: LogLevel): void {
-  globalLevel = level;
-}
-
-/**
- * Attach a file handler to all loggers.
- * Called after workspace is created so the path exists.
- */
-export function attachFileHandler(filePath: string): void {
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  logFilePath = filePath;
 }
 
 const LEVEL_NAMES: Record<LogLevel, string> = {
@@ -41,53 +31,442 @@ const LEVEL_NAMES: Record<LogLevel, string> = {
   [LogLevel.ERROR]: "ERROR",
 };
 
-export interface Logger {
-  debug(msg: string, ...args: unknown[]): void;
-  info(msg: string, ...args: unknown[]): void;
-  warning(msg: string, ...args: unknown[]): void;
-  error(msg: string, ...args: unknown[]): void;
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
+
+let globalLevel: LogLevel = LogLevel.INFO;
+let logFilePath: string | undefined;
+let jsonLogEnabled = false;
+
+const FILE_LEVEL: LogLevel = LogLevel.DEBUG;
+
+export function setLevel(level: LogLevel): void {
+  globalLevel = level;
+}
+
+export function attachFileHandler(filePath: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  logFilePath = filePath;
+}
+
+export function enableJsonLog(): void {
+  jsonLogEnabled = true;
+}
+
+// ---------------------------------------------------------------------------
+// Event categories
+// ---------------------------------------------------------------------------
+
+export type EventCategory = "engine" | "stage" | "agent" | "debug";
+
+// ---------------------------------------------------------------------------
+// Engine events
+// ---------------------------------------------------------------------------
+
+export interface FlowStartEvent {
+  category: "engine";
+  event: "flow_start";
+  flow: string;
+  work_dir: string;
+  output_dir: string;
+  model: string;
+  max_parallel: number;
+  resume: boolean;
+}
+
+export interface FlowEndEvent {
+  category: "engine";
+  event: "flow_end";
+  duration_ms: number;
+  stages_total: number;
+  stages_completed: number;
+  stages_failed: number;
+}
+
+export interface CheckpointSaveEvent {
+  category: "engine";
+  event: "checkpoint_save";
+  stage: string;
+}
+
+export interface CheckpointLoadEvent {
+  category: "engine";
+  event: "checkpoint_load";
+  data: string;
+}
+
+export interface ReportRefreshEvent {
+  category: "engine";
+  event: "report_refresh";
+  path: string;
+}
+
+// ---------------------------------------------------------------------------
+// Stage events
+// ---------------------------------------------------------------------------
+
+export interface StageStartEvent {
+  category: "stage";
+  event: "stage_start";
+  stage: string;
+}
+
+export interface StageDoneEvent {
+  category: "stage";
+  event: "stage_done";
+  stage: string;
+  exit_code: number;
+  duration_ms: number;
+  turns: number;
+  tools: number;
+  tokens_in: number;
+  tokens_out: number;
+  api_errors: number;
+  retries: number;
+  final_stop?: string;
+}
+
+export interface StageSkippedEvent {
+  category: "stage";
+  event: "stage_skipped";
+  stage: string;
+  reason: string;
+}
+
+export interface DispatchEvent {
+  category: "stage";
+  event: "dispatch";
+  stage: string;
+  count: number;
+}
+
+export interface RouteEvent {
+  category: "stage";
+  event: "route";
+  stage: string;
+  target: string | null;
+}
+
+export interface ProcessErrorEvent {
+  category: "stage";
+  event: "process_error";
+  stage: string;
+  error: string;
+}
+
+// ---------------------------------------------------------------------------
+// Agent events
+// ---------------------------------------------------------------------------
+
+export interface ToolCallEvent {
+  category: "agent";
+  event: "tool_call";
+  stage: string;
+  tool: string;
+  args_summary: string;
+  elapsed_s: number;
+  status: "ok" | "error";
+  error_summary?: string;
+}
+
+export interface ApiErrorEvent {
+  category: "agent";
+  event: "api_error";
+  stage: string;
+  error: string;
+  api_errors_total: number;
+}
+
+export interface ExtensionErrorEvent {
+  category: "agent";
+  event: "extension_error";
+  stage: string;
+  message: string;
+}
+
+export interface AutoRetryEvent {
+  category: "agent";
+  event: "auto_retry";
+  stage: string;
+  attempt: number;
+  max_attempts: number;
+  delay_ms: number;
+  reason: string;
+}
+
+export interface RetryEvent {
+  category: "agent";
+  event: "retry";
+  stage: string;
+  attempt: number;
+  max_attempts: number;
+  reason: string;
+}
+
+export interface IdleTimeoutEvent {
+  category: "agent";
+  event: "idle_timeout";
+  stage: string;
+  timeout_s: number;
+}
+
+export interface TimeoutEvent {
+  category: "agent";
+  event: "timeout";
+  stage: string;
+  timeout_s: number;
+}
+
+// ---------------------------------------------------------------------------
+// Debug events (catch-all for informational messages)
+// ---------------------------------------------------------------------------
+
+export interface DebugEvent {
+  category: "debug";
+  event: "debug";
+  source: string;
+  level: "debug" | "info" | "warning" | "error";
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Union type
+// ---------------------------------------------------------------------------
+
+export type YoungFlowEvent =
+  // engine
+  | FlowStartEvent
+  | FlowEndEvent
+  | CheckpointSaveEvent
+  | CheckpointLoadEvent
+  | ReportRefreshEvent
+  // stage
+  | StageStartEvent
+  | StageDoneEvent
+  | StageSkippedEvent
+  | DispatchEvent
+  | RouteEvent
+  | ProcessErrorEvent
+  // agent
+  | ToolCallEvent
+  | ApiErrorEvent
+  | ExtensionErrorEvent
+  | AutoRetryEvent
+  | RetryEvent
+  | IdleTimeoutEvent
+  | TimeoutEvent
+  // debug
+  | DebugEvent;
+
+// ---------------------------------------------------------------------------
+// logEvent — single unified interface
+// ---------------------------------------------------------------------------
+
+export function logEvent(event: YoungFlowEvent): void {
+  const ts = new Date().toISOString();
+  const { module, level, text } = formatEvent(event);
+
+  // stderr: JSON or text (mutually exclusive)
+  if (jsonLogEnabled) {
+    process.stderr.write(JSON.stringify({ ts, ...event }) + "\n");
+  } else if (level >= globalLevel) {
+    const tsShort = ts.slice(11, 19);
+    process.stderr.write(
+      `${tsShort} [youngflow.${module}] ${LEVEL_NAMES[level]} ${text}\n`,
+    );
+  }
+
+  // File log: always human-readable text
+  if (logFilePath && level >= FILE_LEVEL) {
+    try {
+      appendFileSync(
+        logFilePath,
+        `${ts.slice(11, 19)} [youngflow.${module}] ${LEVEL_NAMES[level]} ${text}\n`,
+        "utf-8",
+      );
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Convenience: debug helper (replaces getLogger)
+// ---------------------------------------------------------------------------
+
+export function debug(source: string, level: "debug" | "info" | "warning" | "error", msg: string, ...args: unknown[]): void {
+  const formatted = args.length === 0 ? msg : formatMsg(msg, args);
+  logEvent({ category: "debug", event: "debug", source, level, message: formatted });
 }
 
 function formatMsg(msg: string, args: unknown[]): string {
-  if (args.length === 0) return msg;
-  // Python-style %s substitution
   let i = 0;
   return msg.replace(/%s/g, () => (i < args.length ? String(args[i++]) : "%s"));
 }
 
-function timestamp(): string {
-  return new Date().toISOString().slice(11, 19);
+// ---------------------------------------------------------------------------
+// Text formatting — produces human-readable text for each event type
+// ---------------------------------------------------------------------------
+
+interface FormattedEvent {
+  module: string;
+  level: LogLevel;
+  text: string;
 }
 
-export function getLogger(name: string): Logger {
-  const emit = (level: LogLevel, msg: string, args: unknown[]) => {
-    const formatted = formatMsg(msg, args);
-    const prefix = LEVEL_NAMES[level];
+function formatEvent(event: YoungFlowEvent): FormattedEvent {
+  switch (event.event) {
+    // ── Engine ──
+    case "flow_start":
+      return {
+        module: "flow",
+        level: LogLevel.INFO,
+        text:
+          `flow_start: ${event.flow}` +
+          ` | work_dir=${event.work_dir}` +
+          ` | model=${event.model}` +
+          ` | parallel=${event.max_parallel}` +
+          (event.resume ? " | resume=true" : ""),
+      };
+    case "flow_end":
+      return {
+        module: "flow",
+        level: LogLevel.INFO,
+        text:
+          `flow_end: ${event.duration_ms}ms` +
+          ` | total=${event.stages_total}` +
+          ` | completed=${event.stages_completed}` +
+          ` | failed=${event.stages_failed}`,
+      };
+    case "checkpoint_save":
+      return {
+        module: "checkpoint",
+        level: LogLevel.INFO,
+        text: `Checkpoint: ${event.stage} marked done`,
+      };
+    case "checkpoint_load":
+      return {
+        module: "checkpoint",
+        level: LogLevel.INFO,
+        text: `Flow state loaded: ${event.data}`,
+      };
+    case "report_refresh":
+      return {
+        module: "report",
+        level: LogLevel.INFO,
+        text: `Flow report: ${event.path}`,
+      };
 
-    // Console: respect globalLevel, match Python format
-    if (level >= globalLevel) {
-      const ts = timestamp();
-      console.error(`${ts} [${name}] ${prefix} ${formatted}`);
-    }
+    // ── Stage ──
+    case "stage_start":
+      return {
+        module: "orchestrator",
+        level: LogLevel.INFO,
+        text: `[${event.stage}] starting`,
+      };
+    case "stage_done":
+      return {
+        module: "runner",
+        level: event.exit_code === 0 ? LogLevel.INFO : LogLevel.WARNING,
+        text:
+          `[${event.stage}] DONE: exit=${event.exit_code}` +
+          ` duration=${event.duration_ms}ms` +
+          ` turns=${event.turns} tools=${event.tools}` +
+          ` tokens_in=${event.tokens_in} tokens_out=${event.tokens_out}` +
+          ` api_errors=${event.api_errors} retries=${event.retries}` +
+          (event.final_stop ? ` final_stop=${event.final_stop}` : ""),
+      };
+    case "stage_skipped":
+      return {
+        module: "orchestrator",
+        level: LogLevel.INFO,
+        text: `[${event.stage}] skipped (${event.reason})`,
+      };
+    case "dispatch":
+      return {
+        module: "orchestrator",
+        level: LogLevel.INFO,
+        text: `[${event.stage}] dispatching ${event.count} items`,
+      };
+    case "route":
+      return {
+        module: "orchestrator",
+        level: LogLevel.INFO,
+        text: event.target
+          ? `[${event.stage}] routing to '${event.target}'`
+          : `[${event.stage}] no route matched → END`,
+      };
+    case "process_error":
+      return {
+        module: "runner",
+        level: LogLevel.ERROR,
+        text: `[${event.stage}] process error: ${event.error}`,
+      };
 
-    // File: always write at DEBUG+ when file handler is attached
-    if (logFilePath && level >= FILE_LEVEL) {
-      try {
-        appendFileSync(
-          logFilePath,
-          `${timestamp()} [${name}] ${prefix} ${formatted}\n`,
-          "utf-8",
-        );
-      } catch {
-        // best-effort file logging
+    // ── Agent ──
+    case "tool_call":
+      if (event.status === "error") {
+        return {
+          module: "runner",
+          level: LogLevel.WARNING,
+          text: `[${event.stage}] [${event.elapsed_s}s] ❌ ${event.tool}: ${event.error_summary ?? ""}`,
+        };
       }
-    }
-  };
+      return {
+        module: "runner",
+        level: LogLevel.INFO,
+        text: `[${event.stage}] [${event.elapsed_s}s] ${event.tool}: ${event.args_summary}`,
+      };
+    case "api_error":
+      return {
+        module: "runner",
+        level: LogLevel.ERROR,
+        text: `[${event.stage}] ❌ API error (${event.api_errors_total}): ${event.error}`,
+      };
+    case "extension_error":
+      return {
+        module: "runner",
+        level: LogLevel.WARNING,
+        text: `[${event.stage}] ❌ extension: ${event.message}`,
+      };
+    case "auto_retry":
+      return {
+        module: "runner",
+        level: LogLevel.WARNING,
+        text:
+          `[${event.stage}] 🔄 auto-retry ${event.attempt}/${event.max_attempts}` +
+          ` in ${event.delay_ms}ms: ${event.reason}`,
+      };
+    case "retry":
+      return {
+        module: "runner",
+        level: LogLevel.WARNING,
+        text:
+          `[${event.stage}] Retryable error (attempt ${event.attempt}/${event.max_attempts}):` +
+          ` ${event.reason}`,
+      };
+    case "idle_timeout":
+      return {
+        module: "runner",
+        level: LogLevel.WARNING,
+        text: `[${event.stage}] No output for ${event.timeout_s}s, killing`,
+      };
+    case "timeout":
+      return {
+        module: "runner",
+        level: LogLevel.ERROR,
+        text: `[${event.stage}] Timeout after ${event.timeout_s}s`,
+      };
 
-  return {
-    debug: (msg, ...args) => emit(LogLevel.DEBUG, msg, args),
-    info: (msg, ...args) => emit(LogLevel.INFO, msg, args),
-    warning: (msg, ...args) => emit(LogLevel.WARNING, msg, args),
-    error: (msg, ...args) => emit(LogLevel.ERROR, msg, args),
-  };
+    // ── Debug ──
+    case "debug": {
+      const lvl =
+        event.level === "error" ? LogLevel.ERROR :
+        event.level === "warning" ? LogLevel.WARNING :
+        event.level === "debug" ? LogLevel.DEBUG :
+        LogLevel.INFO;
+      return { module: event.source, level: lvl, text: event.message };
+    }
+  }
 }

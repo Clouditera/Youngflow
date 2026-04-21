@@ -12,9 +12,7 @@ import path from "node:path";
 import yaml from "js-yaml";
 import { StageType, type FlowSpec } from "./spec.js";
 import type { Workspace } from "./workspace.js";
-import { getLogger } from "./logger.js";
-
-const logger = getLogger("youngflow.report");
+import { logEvent, debug } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Data collection
@@ -222,7 +220,7 @@ export function refresh(
     const stages = collectStageReports(spec, workspace);
     return renderHtml(stages, workspace.root, workspace.reportPath);
   } catch (e) {
-    logger.debug("Report refresh failed: %s", e);
+    debug("report", "debug", "Report refresh failed: %s", e);
     return undefined;
   }
 }
@@ -507,7 +505,7 @@ ${cards.join("")}
 </body></html>`;
 
   writeFileSync(reportPath, content, "utf-8");
-  logger.info("Flow report: %s", reportPath);
+  logEvent({ category: "engine", event: "report_refresh", path: reportPath });
   return reportPath;
 }
 

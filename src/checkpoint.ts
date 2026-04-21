@@ -9,9 +9,7 @@ import path from "node:path";
 import fg from "fast-glob";
 const { globSync } = fg;
 import yaml from "js-yaml";
-import { getLogger } from "./logger.js";
-
-const logger = getLogger("youngflow.checkpoint");
+import { logEvent, debug } from "./logger.js";
 
 const STATE_FILE = "flow_state.yaml";
 
@@ -33,7 +31,7 @@ export class Checkpoint {
     const p = path.join(this.dir, `${stageId}.done.yaml`);
     mkdirSync(path.dirname(p), { recursive: true });
     writeFileSync(p, yaml.dump(marker), "utf-8");
-    logger.info("Checkpoint: %s marked done", stageId);
+    logEvent({ category: "engine", event: "checkpoint_save", stage: stageId });
   }
 
   isDone(stageId: string): boolean {
@@ -70,7 +68,7 @@ export class Checkpoint {
     }
     const p = path.join(this.dir, STATE_FILE);
     writeFileSync(p, yaml.dump(saveable), "utf-8");
-    logger.debug("Flow state saved: %s", JSON.stringify(saveable));
+    debug("checkpoint", "debug", "Flow state saved: %s", JSON.stringify(saveable));
   }
 
   loadState(): Record<string, any> {
@@ -81,10 +79,10 @@ export class Checkpoint {
       const result = typeof data === "object" && data !== null
         ? (data as Record<string, any>)
         : {};
-      logger.info("Flow state loaded: %s", JSON.stringify(result));
+      logEvent({ category: "engine", event: "checkpoint_load", data: JSON.stringify(result) });
       return result;
     } catch (e) {
-      logger.warning("Failed to load flow state: %s", e);
+      debug("checkpoint", "warning", "Failed to load flow state: %s", e);
       return {};
     }
   }
@@ -94,6 +92,6 @@ export class Checkpoint {
     for (const f of files) {
       unlinkSync(path.join(this.dir, f));
     }
-    logger.info("Checkpoints cleaned");
+    debug("checkpoint", "info", "Checkpoints cleaned");
   }
 }

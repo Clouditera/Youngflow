@@ -9,9 +9,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 import Ajv from "ajv";
-import { getLogger } from "./logger.js";
-
-const logger = getLogger("youngflow.spec");
+import { debug } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Types (all readonly)
@@ -144,7 +142,7 @@ export function parseFlow(
       );
     }
     allStages = allStages.slice(0, idx + 1);
-    logger.info("Truncated flow at '%s' (%s stages)", untilStage, allStages.length);
+    debug("spec", "info", "Truncated flow at '%s' (%s stages)", untilStage, allStages.length);
   }
 
   return {
@@ -281,7 +279,7 @@ export function validateFlow(raw: Record<string, any>, flowDir: string): void {
     throw new FlowValidationError(msg);
   }
 
-  logger.info("flow.yaml validation passed");
+  debug("spec", "info", "flow.yaml validation passed");
 }
 
 function validateSchema(raw: Record<string, any>, errors: string[]): void {
@@ -290,7 +288,7 @@ function validateSchema(raw: Record<string, any>, errors: string[]): void {
     "flow.schema.yaml",
   );
   if (!existsSync(schemaPath)) {
-    logger.warning("Schema file not found: %s", schemaPath);
+    debug("spec", "warning", "Schema file not found: %s", schemaPath);
     return;
   }
 

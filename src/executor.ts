@@ -7,9 +7,7 @@
 
 import { mkdirSync, appendFileSync, existsSync, statSync, openSync, writeSync, closeSync } from "node:fs";
 import path from "node:path";
-import { getLogger } from "./logger.js";
 
-const logger = getLogger("youngflow.executor");
 import { render, type PromptContext } from "./prompt.js";
 import {
   type EventHandler,
@@ -271,16 +269,14 @@ export class Executor {
     for (const name of extNames) {
       const extDir = path.join(this.spec.extensionsDir, name);
       const extFile = path.join(this.spec.extensionsDir, `${name}.ts`);
-      try {
-        if (existsSync(extDir) && statSync(extDir).isDirectory()) {
-          resolved.push(extDir);
-        } else if (existsSync(extFile)) {
-          resolved.push(extFile);
-        } else {
-          logger.warning("Extension not found: %s (in %s)", name, this.spec.extensionsDir);
-        }
-      } catch {
-        // skip
+      if (existsSync(extDir) && statSync(extDir).isDirectory()) {
+        resolved.push(extDir);
+      } else if (existsSync(extFile)) {
+        resolved.push(extFile);
+      } else {
+        throw new Error(
+          `Extension '${name}' not found in ${this.spec.extensionsDir}`,
+        );
       }
     }
     return resolved;

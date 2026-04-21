@@ -22,9 +22,8 @@ import {
 } from "./spec.js";
 import { extractState, StateExtractionError } from "./state.js";
 import { Workspace } from "./workspace.js";
-import { getLogger } from "./logger.js";
+import { logEvent, debug } from "./logger.js";
 
-const logger = getLogger("youngflow.orchestrator");
 
 // Simple async semaphore (equivalent to asyncio.Semaphore)
 class Semaphore {
@@ -253,7 +252,7 @@ export class Orchestrator {
 
     builder.addNode(stage.id, async (state: FlowState) => {
       if (self.resume && self.checkpoint.isDone(stage.id)) {
-        logger.info("[%s] skipped (resume)", stage.id);
+        logEvent({ category: "stage", event: "stage_skipped", stage: stage.id, reason: "resume" });
         const updates: Record<string, any> = {
           stage_results: [
             { id: stage.id, exit_code: 0, duration_ms: 0, skipped: true },
@@ -267,25 +266,17 @@ export class Orchestrator {
         return updates;
       }
 
-      logger.info("[%s] starting", stage.id);
+      logEvent({ category: "stage", event: "stage_start", stage: stage.id });
       const startedAt = new Date().toISOString().slice(0, 19);
       const result = await self.executor.execute(stage);
       const updates: Record<string, any> = {
         stage_results: [self.resultDict(result, startedAt)],
       };
 
-      try {
-        updates.extracted = self.mergeStageState(stage, state, result);
-      } catch (e) {
-        if (e instanceof StateExtractionError) {
-          return self.handleStateFailure(stage, state, result, e, startedAt);
-        }
-        throw e;
-      }
+      updates.extracted = self.mergeStageState(stage, state, result);
 
       self.checkpoint.markDone(stage.id, updates.stage_results[0]);
       self.refreshReport();
-      logger.info("[%s] done: exit=%s duration=%sms", stage.id, result.exitCode, result.durationMs);
 
       if (stage.routes.length > 0) {
         const [decision, counts] = self.evaluateRoutes(
@@ -323,17 +314,17 @@ export class Orchestrator {
     // Gate dispatch
     const gateDispatch = (state: FlowState): string | Send[] => {
       if (self.resume && self.checkpoint.isDone(stage.id)) {
-        logger.info("[%s] skipped (resume)", stage.id);
+        logEvent({ category: "stage", event: "stage_skipped", stage: stage.id, reason: "resume" });
         return collectorId;
       }
 
       const items = self.resolveItems(stage, state);
       if (items.length === 0) {
-        logger.warning("[%s] no items to dispatch", stage.id);
+        debug("orchestrator", "warning", "[%s] no items to dispatch", stage.id);
         return collectorId;
       }
 
-      logger.info("[%s] dispatching %s items", stage.id, items.length);
+      logEvent({ category: "stage", event: "dispatch", stage: stage.id, count: items.length });
       return items.map(
         (item) => new Send(workerId, { ...state, ...item }),
       );
@@ -360,7 +351,7 @@ export class Orchestrator {
 
       // Resume: skip if this worker already completed
       if (self.resume && self.checkpoint.isDone(workerKey)) {
-        logger.info("[%s/%s] skipped (resume)", stage.id, label);
+        logEvent({ category: "stage", event: "stage_skipped", stage: workerKey, reason: "resume" });
         const cached = self.checkpoint.loadDone(workerKey);
         return { stage_results: [cached] };
       }
@@ -376,7 +367,7 @@ export class Orchestrator {
             outputDir,
             parentExtensions: stage.extensions,
           });
-          logger.info("[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
+          debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
         } finally {
           sem.release();
         }
@@ -388,7 +379,7 @@ export class Orchestrator {
             outputDir,
             iterateFile,
           });
-          logger.info("[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
+          debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
         } finally {
           sem.release();
         }
@@ -442,20 +433,7 @@ export class Orchestrator {
         outputDir: self.workspace.root,
       };
 
-      try {
-        updates.extracted = self.mergeStageState(stage, state, synthetic);
-      } catch (e) {
-        if (e instanceof StateExtractionError) {
-          return self.handleStateFailure(
-            stage,
-            state,
-            synthetic,
-            e,
-            fanoutStartedAt,
-          );
-        }
-        throw e;
-      }
+      updates.extracted = self.mergeStageState(stage, state, synthetic);
 
       self.checkpoint.markDone(stage.id, {
         exit_code: synthetic.exitCode,
@@ -488,7 +466,7 @@ export class Orchestrator {
       for (let i = 0; i < stage.tasks.length; i++) {
         const task = stage.tasks[i];
         if (task.when && !evaluateRouteCondition(task.when, extracted)) {
-          logger.info("[%s/%s] skipped (when: %s)", stage.id, task.id, task.when);
+          logEvent({ category: "stage", event: "stage_skipped", stage: `${stage.id}/${task.id}`, reason: `when: ${task.when}` });
           continue;
         }
         items.push({ _stage_config: { task_index: i } });
@@ -539,40 +517,6 @@ export class Orchestrator {
     return newExtracted;
   }
 
-  private handleStateFailure(
-    stage: StageSpec,
-    state: FlowState,
-    result: StageResult,
-    error: StateExtractionError,
-    startedAt = "",
-  ): Record<string, any> {
-    logger.error("[%s] state extraction failed: %s", stage.id, error.reason);
-    const failedState = {
-      exit_code: 1,
-      duration_ms: result.durationMs,
-      state_error: `${error.key}: ${error.reason}`,
-    };
-    const newExtracted = {
-      ...(state.extracted ?? {}),
-      [stage.id]: failedState,
-    };
-    this.checkpoint.saveState({ extracted: newExtracted });
-
-    const failedResult = {
-      ...this.resultDict(result, startedAt),
-      exit_code: 1,
-      error: `state extraction failed: ${error.key}: ${error.reason}`,
-    };
-    this.checkpoint.markDone(stage.id, failedResult);
-    this.refreshReport();
-
-    return {
-      stage_results: [failedResult],
-      extracted: newExtracted,
-      _route_decision: "",
-    };
-  }
-
   private evaluateRoutes(
     stage: StageSpec,
     extracted: Record<string, Record<string, any>>,
@@ -587,7 +531,7 @@ export class Orchestrator {
       if (route.maxLoops) {
         const key = `${stage.id}→${route.to}`;
         if ((counts[key] ?? 0) >= route.maxLoops) {
-          logger.info("[%s] route to '%s' exhausted (%s/%s)",
+          debug("orchestrator", "info", "[%s] route to '%s' exhausted (%s/%s)",
             stage.id, route.to, counts[key], route.maxLoops);
           continue;
         }
@@ -595,13 +539,12 @@ export class Orchestrator {
       // Route matched
       const key = `${stage.id}→${route.to}`;
       counts[key] = (counts[key] ?? 0) + 1;
-      logger.info("[%s] routing to '%s'%s", stage.id, route.to,
-        route.when ? ` (when: ${route.when})` : "");
+      logEvent({ category: "stage", event: "route", stage: stage.id, target: route.to });
       this.checkpoint.saveState({ extracted, route_counts: counts });
       return [route.to, counts];
     }
 
-    logger.info("[%s] no route matched → END", stage.id);
+    logEvent({ category: "stage", event: "route", stage: stage.id, target: null });
     return ["", counts];
   }
 
@@ -621,10 +564,10 @@ export class Orchestrator {
   ): string {
     for (const route of stage.routes) {
       if (route.when && !evaluateRouteCondition(route.when, extracted)) continue;
-      logger.info("[%s] routing to '%s' (resume)", stage.id, route.to);
+      logEvent({ category: "stage", event: "route", stage: stage.id, target: route.to });
       return route.to;
     }
-    logger.info("[%s] no route matched → END (resume)", stage.id);
+    logEvent({ category: "stage", event: "route", stage: stage.id, target: null });
     return "";
   }
 
@@ -658,14 +601,14 @@ function evaluateRouteCondition(
   // Python split(None, 2): split into at most 3 parts, third keeps remainder
   const parts = expr.trim().split(/\s+/);
   if (parts.length < 3) {
-    logger.warning("Invalid condition: '%s'", expr);
+    debug("orchestrator", "warning", "Invalid condition: '%s'", expr);
     return false;
   }
   const [lhs, op, ...rest] = parts;
   const rawValue = rest.join(" ");
 
   if (!lhs.includes(".")) {
-    logger.warning("Condition must use 'stage_id.key' format: '%s'", expr);
+    debug("orchestrator", "warning", "Condition must use 'stage_id.key' format: '%s'", expr);
     return false;
   }
 
@@ -678,7 +621,7 @@ function evaluateRouteCondition(
   try {
     return compare(actual, op, expected);
   } catch {
-    logger.warning("Unknown operator in condition: '%s'", op);
+    debug("orchestrator", "warning", "Unknown operator in condition: '%s'", op);
     return false;
   }
 }
