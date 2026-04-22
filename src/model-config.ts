@@ -23,6 +23,9 @@ const CUSTOM_PROVIDER = "youngflow";
 const API_TYPE_MAP: Record<string, string> = {
   openai: "openai-completions",
   anthropic: "anthropic",
+  // Pass-through: user already specified the exact pi-cli API type
+  "openai-completions": "openai-completions",
+  "openai-responses": "openai-responses",
 };
 
 const BUILTIN_PROVIDERS = new Set([
