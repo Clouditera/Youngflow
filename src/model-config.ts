@@ -129,7 +129,13 @@ function createAgentDir(opts: {
   // models.json
   let modelsData: Record<string, any>;
   if (opts.isCustom) {
-    const apiType = API_TYPE_MAP[opts.proto] ?? "openai-responses";
+    const apiType = API_TYPE_MAP[opts.proto];
+    if (!apiType) {
+      throw new Error(
+        `Unknown MODEL_PROTO_TYPE: "${opts.proto}". ` +
+        `Valid values: ${Object.keys(API_TYPE_MAP).join(", ")}`,
+      );
+    }
     const providerConfig: Record<string, any> = {
       baseUrl: opts.baseUrl,
       api: apiType,
