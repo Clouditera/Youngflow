@@ -4,8 +4,9 @@ dist/
 *.tgz
 
 # youngflow runtime
-.workspace/
+.workspace*/
 .youngflow/
+.bossmode*/
 .pi-agent/
 
 # Flow assets (external, not shipped with engine)

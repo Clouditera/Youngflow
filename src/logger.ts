@@ -134,6 +134,13 @@ export interface StageSkippedEvent {
   reason: string;
 }
 
+export interface StageFailedEvent {
+  category: "stage";
+  event: "stage_failed";
+  stage: string;
+  exit_code: number;
+}
+
 export interface DispatchEvent {
   category: "stage";
   event: "dispatch";
@@ -245,6 +252,7 @@ export type YoungFlowEvent =
   | StageStartEvent
   | StageDoneEvent
   | StageSkippedEvent
+  | StageFailedEvent
   | DispatchEvent
   | RouteEvent
   | ProcessErrorEvent
@@ -382,6 +390,12 @@ function formatEvent(event: YoungFlowEvent): FormattedEvent {
         module: "orchestrator",
         level: LogLevel.INFO,
         text: `[${event.stage}] skipped (${event.reason})`,
+      };
+    case "stage_failed":
+      return {
+        module: "orchestrator",
+        level: LogLevel.ERROR,
+        text: `[${event.stage}] FAILED (exit_code=${event.exit_code})`,
       };
     case "dispatch":
       return {

@@ -35,7 +35,15 @@ export class Checkpoint {
   }
 
   isDone(stageId: string): boolean {
-    return existsSync(path.join(this.dir, `${stageId}.done.yaml`));
+    const p = path.join(this.dir, `${stageId}.done.yaml`);
+    if (!existsSync(p)) return false;
+    try {
+      const data = yaml.load(readFileSync(p, "utf-8")) as Record<string, any>;
+      // Only treat as done if status is success; failed stages must re-run on resume
+      return data?.status === "success";
+    } catch {
+      return false;
+    }
   }
 
   loadDone(stageId: string): Record<string, any> {

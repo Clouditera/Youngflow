@@ -24,6 +24,17 @@ import { extractState, StateExtractionError } from "./state.js";
 import { Workspace } from "./workspace.js";
 import { logEvent, debug } from "./logger.js";
 
+export class FlowExecutionError extends Error {
+  constructor(
+    message: string,
+    public readonly stageId: string,
+    public readonly exitCode: number,
+  ) {
+    super(message);
+    this.name = "FlowExecutionError";
+  }
+}
+
 
 // Simple async semaphore (equivalent to asyncio.Semaphore)
 class Semaphore {
@@ -277,6 +288,16 @@ export class Orchestrator {
 
       self.checkpoint.markDone(stage.id, updates.stage_results[0]);
       self.refreshReport();
+
+      // Enforce error_strategy: non-zero exit stops the flow unless 'continue'
+      if (result.exitCode !== 0 && stage.errorStrategy !== "continue") {
+        logEvent({ category: "stage", event: "stage_failed", stage: stage.id, exit_code: result.exitCode });
+        throw new FlowExecutionError(
+          `Stage '${stage.id}' failed with exit code ${result.exitCode}`,
+          stage.id,
+          result.exitCode,
+        );
+      }
 
       if (stage.routes.length > 0) {
         const [decision, counts] = self.evaluateRoutes(
