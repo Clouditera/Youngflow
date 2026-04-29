@@ -68,7 +68,9 @@ export function resolveModelConfig(
   }
 
   const isCustom = !!baseUrl;
-  const provider = isCustom ? (proto || FALLBACK_PROVIDER) : proto;
+  const provider = isCustom
+    ? (modelName.toLowerCase().startsWith("deepseek") ? "deepseek" : proto || FALLBACK_PROVIDER)
+    : proto;
   let modelString = `${provider}/${modelName}`;
   if (effort) modelString += `:${effort}`;
 
