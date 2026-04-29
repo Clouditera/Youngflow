@@ -18,7 +18,15 @@ import path from "node:path";
 import { debug } from "./logger.js";
 
 const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
-const FALLBACK_PROVIDER = "youngflow";
+const CUSTOM_PROVIDER = "youngflow";
+
+const DEEPSEEK_REASONING_EFFORT_MAP = {
+  minimal: "high",
+  low: "high",
+  medium: "high",
+  high: "high",
+  xhigh: "max",
+};
 
 const API_TYPE_MAP: Record<string, string> = {
   openai: "openai-completions",
@@ -40,6 +48,7 @@ const BUILTIN_PROVIDERS = new Set([
 
 export interface ModelConfig {
   readonly modelString: string;
+  readonly thinkingLevel: string | undefined;
   readonly apiKey: string | undefined;
   readonly agentDir: string | undefined;
   readonly envVars: Record<string, string>;
@@ -59,20 +68,19 @@ export function resolveModelConfig(
 
   if (!proto && !modelName && !apiKey) {
     debug("model_config", "info", "No model config in .env — using default: %s", defaultModel);
-    return { modelString: defaultModel, apiKey: undefined, agentDir: undefined, envVars: {} };
+    return { modelString: defaultModel, thinkingLevel: undefined, apiKey: undefined, agentDir: undefined, envVars: {} };
   }
 
   if (!modelName) {
     debug("model_config", "warning", "LLM_MODEL_NAME not set — using default: %s", defaultModel);
-    return { modelString: defaultModel, apiKey: undefined, agentDir: undefined, envVars: {} };
+    return { modelString: defaultModel, thinkingLevel: undefined, apiKey: undefined, agentDir: undefined, envVars: {} };
   }
 
   const isCustom = !!baseUrl;
-  const provider = isCustom
-    ? (modelName.toLowerCase().startsWith("deepseek") ? "deepseek" : proto || FALLBACK_PROVIDER)
-    : proto;
-  let modelString = `${provider}/${modelName}`;
-  if (effort) modelString += `:${effort}`;
+  const isDeepSeekCustom = isCustom && isDeepSeekLike(modelName, baseUrl);
+  const provider = isCustom ? (isDeepSeekCustom ? "deepseek" : CUSTOM_PROVIDER) : proto;
+  const modelString = `${provider}/${modelName}`;
+  const thinkingLevel = effort || undefined;
 
   const envVars: Record<string, string> = {};
   if (apiKey) envVars[API_KEY_ENV] = apiKey;
@@ -86,6 +94,7 @@ export function resolveModelConfig(
       apiKeyEnv: apiKey ? API_KEY_ENV : undefined,
       provider,
       isCustom,
+      isDeepSeekCustom,
       base: agentDirBase,
       agentsDir,
     });
@@ -98,10 +107,23 @@ export function resolveModelConfig(
 
   return {
     modelString,
+    thinkingLevel,
     apiKey: apiKey || undefined,
     agentDir,
     envVars,
   };
+}
+
+function isDeepSeekLike(modelName: string, baseUrl: string): boolean {
+  const model = modelName.toLowerCase();
+  const url = baseUrl.toLowerCase();
+  return (
+    model === "deepseek" ||
+    model.startsWith("deepseek-") ||
+    model.startsWith("deepseek/") ||
+    model.startsWith("deepseek-ai/") ||
+    url.includes("deepseek")
+  );
 }
 
 function createAgentDir(opts: {
@@ -111,6 +133,7 @@ function createAgentDir(opts: {
   apiKeyEnv?: string;
   provider: string;
   isCustom: boolean;
+  isDeepSeekCustom: boolean;
   base?: string;
   agentsDir?: string;
 }): string {
@@ -147,11 +170,13 @@ function createAgentDir(opts: {
           input: ["text"],
           contextWindow: 200000,
           maxTokens: 16384,
-          ...(opts.provider === "deepseek" ? {
+          ...(opts.isDeepSeekCustom ? {
             reasoning: true,
             compat: {
               supportsDeveloperRole: false,
               requiresReasoningContentOnAssistantMessages: true,
+              thinkingFormat: "deepseek",
+              reasoningEffortMap: DEEPSEEK_REASONING_EFFORT_MAP,
             },
           } : {}),
         },

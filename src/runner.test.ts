@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyError, ErrorKind, formatTool, loadEnvFile } from "./runner.js";
+import { classifyError, ErrorKind, formatTool, loadEnvFile, Runner, defaultRunConfig } from "./runner.js";
 import type { RunResult } from "./runner.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -72,6 +72,47 @@ describe("classifyError", () => {
   it("RETRYABLE for Chinese error messages", () => {
     const r = result({ exitCode: 1, finalStopReason: "error", lastError: "负载较高，请稍后重试" });
     expect(classifyError(r)).toBe(ErrorKind.RETRYABLE);
+  });
+
+  it("NON_RETRYABLE for DeepSeek reasoning_content replay protocol errors", () => {
+    const r = result({
+      exitCode: 1,
+      finalStopReason: "error",
+      lastError: "400 The `reasoning_content` in the thinking mode must be passed back to the API.",
+    });
+    expect(classifyError(r)).toBe(ErrorKind.NON_RETRYABLE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runner command construction
+// ---------------------------------------------------------------------------
+
+describe("Runner command construction", () => {
+  it("passes thinking level with --thinking instead of model suffix", () => {
+    const runner = new Runner({
+      modelConfig: {
+        modelString: "deepseek/deepseek-v4-pro",
+        thinkingLevel: "medium",
+        apiKey: undefined,
+        agentDir: undefined,
+        envVars: {},
+      },
+      engineConfig: {
+        errorRetries: 0,
+        errorRetryBackoff: 1,
+        idleTimeout: 60,
+        exportSessions: false,
+      },
+      systemPromptPath: "/tmp/system.md",
+    });
+
+    const cmd = (runner as any).buildCommand(defaultRunConfig({ task: "do it" })) as string[];
+    expect(cmd).toContain("--model");
+    expect(cmd[cmd.indexOf("--model") + 1]).toBe("deepseek/deepseek-v4-pro");
+    expect(cmd).toContain("--thinking");
+    expect(cmd[cmd.indexOf("--thinking") + 1]).toBe("medium");
+    expect(cmd).not.toContain("deepseek/deepseek-v4-pro:medium");
   });
 });
 

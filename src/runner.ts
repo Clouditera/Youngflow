@@ -40,6 +40,7 @@ export interface RunConfig {
   inputFiles: string[];
   timeout: number;
   model?: string;
+  thinkingLevel?: string;
   systemPrompt?: string;
   tools?: string[];
   extensions: string[];
@@ -74,7 +75,7 @@ export enum ErrorKind {
 }
 
 const NON_RETRYABLE_RE =
-  /context.?(?:length|window|overflow|too.?long)|max.?(?:context|tokens).?exceeded|auth|invalid.?(?:api.?key|token)|permission.?denied|forbidden|401|403/i;
+  /context.?(?:length|window|overflow|too.?long)|max.?(?:context|tokens).?exceeded|auth|invalid.?(?:api.?key|token)|permission.?denied|forbidden|401|403|reasoning_content.*thinking mode.*passed back/i;
 
 const RETRYABLE_RE =
   /overloaded|rate.?limit|too many requests|429|500|502|503|504|529|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|timed? out|timeout|terminated|abort|retry delay|provider.?returned.?error|负载较高|稍后重试/i;
@@ -472,6 +473,7 @@ export class Runner {
 
   private buildCommand(config: RunConfig): string[] {
     const modelStr = config.model ?? this.modelConfig.modelString;
+    const thinking = config.thinkingLevel ?? this.modelConfig.thinkingLevel;
     const promptPath = config.systemPrompt ?? this.systemPromptPath;
     const cmd = [
       "pi",
@@ -494,6 +496,11 @@ export class Runner {
       "--no-themes",
       "--model",
       modelStr,
+    );
+    if (thinking) {
+      cmd.push("--thinking", thinking);
+    }
+    cmd.push(
       "--tools",
       config.tools ? config.tools.join(",") : "read,bash,edit,write",
     );
