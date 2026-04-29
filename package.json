@@ -9,11 +9,12 @@
     "youngflow": "bin/youngflow.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.js",
     "dev": "tsc --watch",
     "start": "node bin/youngflow.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:binary": "npm run build && node scripts/build-binaries.js"
   },
   "dependencies": {
     "@langchain/langgraph": "^0.2",
@@ -25,8 +26,22 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0",
     "@types/node": "^22.0",
+    "@yao-pkg/pkg": "^6.19.0",
     "typescript": "^5.7",
     "vitest": "^4.1.4"
+  },
+  "pkg": {
+    "assets": [
+      "dist/flow.schema.yaml",
+      "package.json"
+    ],
+    "targets": [
+      "node20-linux-x64",
+      "node20-macos-x64",
+      "node20-macos-arm64",
+      "node20-win-x64"
+    ],
+    "outputPath": "release"
   },
   "engines": {
     "node": ">=20"

@@ -516,6 +516,37 @@ DONE: exit=0 duration=374978ms turns=22 tools=52
       tokens_in=86651 tokens_out=13248 empty=0
 ```
 
+## 发布二进制
+
+本项目支持用 `@yao-pkg/pkg` 打包 standalone 二进制：
+
+```bash
+npm run build:binary
+```
+
+默认输出到 `release/`：
+
+- `youngflow-linux-x64`
+- `youngflow-macos-x64`
+- `youngflow-macos-arm64`
+- `youngflow-win-x64.exe`
+
+也可以只构建指定 target：
+
+```bash
+PKG_TARGETS=node20-linux-x64 npm run build:binary
+PKG_TARGETS=node20-macos-x64,node20-macos-arm64 npm run build:binary
+```
+
+推送 `v*` tag 会触发 GitHub Actions 构建并发布 release assets：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+注意：YoungFlow 二进制只包含 YoungFlow 自身；运行 flow 时仍需要系统中可执行的 `pi` CLI。
+
 ## 前置依赖
 
 - [pi](https://github.com/badlogic/pi-mono/) CLI（已安装且可执行）
