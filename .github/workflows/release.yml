@@ -41,8 +41,9 @@ jobs:
       - name: Ad-hoc sign macOS binaries
         if: runner.os == 'macOS'
         run: |
-          codesign --sign - release/youngflow-macos-x64
-          codesign --sign - release/youngflow-macos-arm64
+          for bin in release/youngflow-macos-*; do
+            codesign --sign - "$bin"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: youngflow-${{ matrix.name }}
