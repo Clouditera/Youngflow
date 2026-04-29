@@ -114,6 +114,7 @@ export class Orchestrator {
       outputDir?: string;
       resume?: boolean;
       maxParallel?: number;
+      traceEvents?: boolean;
     } = {},
   ) {
     this.spec = spec;
@@ -149,6 +150,7 @@ export class Orchestrator {
       this.workspace,
       this.workDir,
       flowInputs,
+      opts.traceEvents ?? false,
     );
 
     this.stageMap = new Map(spec.stages.map((s) => [s.id, s]));

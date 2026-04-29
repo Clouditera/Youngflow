@@ -62,6 +62,7 @@ export function main(): void {
     console.log(`  ${"--max-parallel N".padEnd(25)} Override max parallel`);
     console.log(`  ${"--list-stages".padEnd(25)} List stages and exit`);
     console.log(`  ${"--json-log".padEnd(25)} Output structured NDJSON to stdout`);
+    console.log(`  ${"--trace-events".padEnd(25)} Save compacted raw pi event stream per stage`);
     console.log(`  ${"-V, --version".padEnd(25)} Show version and exit`);
     console.log();
     console.log("Pass a flow.yaml to see flow-specific input options.");
@@ -97,7 +98,8 @@ export function main(): void {
     .option("--max-parallel <n>", "Override max parallel", parseInt)
     .option("--list-stages", "List stages and exit")
     .option("-v, --verbose", "Verbose logging")
-    .option("--json-log", "Output structured NDJSON to stdout");
+    .option("--json-log", "Output structured NDJSON to stdout")
+    .option("--trace-events", "Save compacted raw pi NDJSON event stream per stage");
 
   // Dynamic flags from flow inputs
   for (const [key, spec] of Object.entries(flowInputsSpec)) {
@@ -214,6 +216,7 @@ async function runFlow(
     outputDir,
     resume: opts.resume,
     maxParallel: opts.maxParallel,
+    traceEvents: opts.traceEvents,
   });
 
   attachFileHandler(orch.workspace.flowLog);
@@ -316,6 +319,7 @@ function listStages(
   console.log(`  ${"--until STAGE".padEnd(25)} Run stages up to STAGE`);
   console.log(`  ${"--resume".padEnd(25)} Resume from last checkpoint`);
   console.log(`  ${"--max-parallel N".padEnd(25)} Override max parallel`);
+  console.log(`  ${"--trace-events".padEnd(25)} Save compacted raw pi event stream per stage`);
   console.log();
 
   console.log(`Stages (${stages.length}):`);

@@ -8,6 +8,12 @@
 import { mkdirSync, appendFileSync, existsSync, statSync, openSync, writeSync, closeSync } from "node:fs";
 import path from "node:path";
 
+const RAW_EVENT_MAX_BYTES = 64 * 1024;
+const UPDATE_EVENT_MAX_BYTES = 16 * 1024;
+const MAX_STRING_CHARS = 4096;
+const MAX_ARRAY_ITEMS = 8;
+const MAX_OBJECT_KEYS = 40;
+
 import { render, type PromptContext } from "./prompt.js";
 import {
   type EventHandler,
@@ -38,15 +44,21 @@ export interface StageResult {
 
 export class StageEventLogger implements EventHandler {
   private logFd: number;
-  private eventsFd: number;
+  private eventsFd?: number;
 
-  constructor(logsDir: string, stageId: string) {
+  constructor(
+    logsDir: string,
+    stageId: string,
+    opts: { traceEvents?: boolean } = {},
+  ) {
     const safeId = stageId.replace(/\//g, "_");
     mkdirSync(logsDir, { recursive: true });
     const logPath = path.join(logsDir, `${safeId}.log`);
     const eventsPath = path.join(logsDir, `${safeId}.events.jsonl`);
     this.logFd = openSync(logPath, "a");
-    this.eventsFd = openSync(eventsPath, "a");
+    if (opts.traceEvents) {
+      this.eventsFd = openSync(eventsPath, "a");
+    }
     const now = new Date().toISOString().replace("T", " ").slice(0, 19);
     this.writeLog(`\n${"=".repeat(60)}`);
     this.writeLog(`Stage: ${stageId} started at ${now}`);
@@ -102,7 +114,9 @@ export class StageEventLogger implements EventHandler {
   }
 
   onRawEvent(line: string): void {
-    const buf = Buffer.from(line + "\n", "utf-8");
+    if (this.eventsFd == null) return;
+    const eventLine = compactEventLine(line);
+    const buf = Buffer.from(eventLine + "\n", "utf-8");
     writeSync(this.eventsFd, buf);
   }
 
@@ -129,8 +143,111 @@ export class StageEventLogger implements EventHandler {
 
   close(): void {
     try { closeSync(this.logFd); } catch { /* ignore */ }
-    try { closeSync(this.eventsFd); } catch { /* ignore */ }
+    if (this.eventsFd != null) {
+      try { closeSync(this.eventsFd); } catch { /* ignore */ }
+    }
   }
+}
+
+function compactEventLine(line: string): string {
+  const byteLen = Buffer.byteLength(line, "utf-8");
+  if (byteLen <= RAW_EVENT_MAX_BYTES && !isUpdateEventLine(line)) return line;
+
+  try {
+    const event = JSON.parse(line) as Record<string, any>;
+    const eventType = String(event.type ?? "");
+    const maxBytes = eventType.endsWith("_update")
+      ? UPDATE_EVENT_MAX_BYTES
+      : RAW_EVENT_MAX_BYTES;
+
+    let compacted = compactValue(event, eventType.endsWith("_update"));
+    let out = JSON.stringify(compacted);
+    if (Buffer.byteLength(out, "utf-8") <= maxBytes) return out;
+
+    compacted = {
+      type: event.type,
+      compacted: true,
+      originalBytes: byteLen,
+      keys: Object.keys(event),
+    };
+    out = JSON.stringify(compacted);
+    return Buffer.byteLength(out, "utf-8") <= maxBytes
+      ? out
+      : JSON.stringify({ type: event.type, compacted: true, originalBytes: byteLen });
+  } catch {
+    return JSON.stringify({
+      type: "raw_event",
+      compacted: true,
+      originalBytes: byteLen,
+      preview: truncateString(line, MAX_STRING_CHARS),
+    });
+  }
+}
+
+function isUpdateEventLine(line: string): boolean {
+  return /"type"\s*:\s*"(?:message_update|tool_execution_update|queue_update)"/.test(line);
+}
+
+function compactValue(value: any, aggressive: boolean, depth = 0): any {
+  if (value == null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") return truncateString(value, aggressive ? 512 : MAX_STRING_CHARS);
+  if (Array.isArray(value)) {
+    const limit = aggressive ? 3 : MAX_ARRAY_ITEMS;
+    const items = value.slice(0, limit).map((v) => compactValue(v, aggressive, depth + 1));
+    if (value.length > limit) {
+      items.push({ compacted: true, omittedItems: value.length - limit });
+    }
+    return items;
+  }
+  if (typeof value === "object") {
+    if (depth > (aggressive ? 3 : 6)) {
+      return { compacted: true, keys: Object.keys(value) };
+    }
+
+    const out: Record<string, any> = {};
+    const entries = Object.entries(value).slice(0, MAX_OBJECT_KEYS);
+    for (const [k, v] of entries) {
+      if (aggressive && isBulkySnapshotField(k)) {
+        out[k] = summarizeBulkyField(v);
+      } else {
+        out[k] = compactValue(v, aggressive, depth + 1);
+      }
+    }
+    const omittedKeys = Object.keys(value).length - entries.length;
+    if (omittedKeys > 0) out.__omittedKeys = omittedKeys;
+    return out;
+  }
+  return String(value);
+}
+
+function isBulkySnapshotField(key: string): boolean {
+  return key === "messages" ||
+    key === "message" ||
+    key === "partialResult" ||
+    key === "result" ||
+    key === "content" ||
+    key === "details" ||
+    key === "progress";
+}
+
+function summarizeBulkyField(value: any): Record<string, any> {
+  const summary: Record<string, any> = {
+    compacted: true,
+    originalBytes: Buffer.byteLength(JSON.stringify(value), "utf-8"),
+  };
+  if (Array.isArray(value)) summary.items = value.length;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    summary.keys = Object.keys(value);
+  }
+  return summary;
+}
+
+function truncateString(s: string, maxChars: number): string {
+  return s.length <= maxChars
+    ? s
+    : `${s.slice(0, maxChars)}… [truncated ${s.length - maxChars} chars]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +261,7 @@ export class Executor {
     private workspace: Workspace,
     private workDir: string,
     private flowInputs: Record<string, any>,
+    private traceEvents = false,
   ) {}
 
   async execute(
@@ -211,7 +329,9 @@ export class Executor {
     const sessionFile = this.workspace.sessionPath(stage.id, itemKey);
 
     // Event handler
-    const handler = new StageEventLogger(this.workspace.logsDir, stageId);
+    const handler = new StageEventLogger(this.workspace.logsDir, stageId, {
+      traceEvents: this.traceEvents,
+    });
 
     let result;
     try {

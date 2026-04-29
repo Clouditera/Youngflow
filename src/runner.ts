@@ -107,7 +107,7 @@ export interface EventHandler {
   onToolStart(toolName: string, args: Record<string, any>, elapsedS: number): void;
   onToolEnd(toolName: string, isError: boolean, result: string, elapsedS: number): void;
   onMessageEnd(content: any[], usage: Record<string, number>, elapsedS: number): void;
-  onRawEvent(line: string): void;
+  onRawEvent?(line: string): void;
   onDone(result: RunResult): void;
 }
 
@@ -278,7 +278,7 @@ export class Runner {
           buffer = buffer.slice(nlIdx + 1);
           if (!lineStr) continue;
 
-          if (handler) handler.onRawEvent(lineStr);
+          handler?.onRawEvent?.(lineStr);
 
           let event: Record<string, any>;
           try {

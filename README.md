@@ -83,7 +83,7 @@ youngflow flows/vulnhunt/flow.yaml \
 output_dir/
 ├── .youngflow/              ← 引擎内部数据（agent 不感知）
 │   ├── checkpoints/         断点恢复文件
-│   ├── logs/                per-stage .log + .events.jsonl
+│   ├── logs/                per-stage .log（--trace-events 时另有 .events.jsonl）
 │   ├── sessions/            pi 会话记录 (.jsonl + .html)
 │   └── flow-report.html     执行状态面板（每 stage 完成后实时刷新）
 │
@@ -501,12 +501,14 @@ resume 模式下：
 
 ## 运行日志
 
-每个 stage 产生两个日志文件：
+每个 stage 默认产生一个人类可读日志；如显式开启 `--trace-events`，会额外保存 compact 后的 pi 事件流：
 
 | 文件 | 内容 |
 |------|------|
 | `.youngflow/logs/{stage_id}.log` | 人类可读日志：工具调用、错误、统计 |
-| `.youngflow/logs/{stage_id}.events.jsonl` | pi CLI 原始 NDJSON 事件流 |
+| `.youngflow/logs/{stage_id}.events.jsonl` | 可选；`--trace-events` 开启时保存 compact 后的 pi CLI NDJSON 事件流，用于底层调试 |
+
+默认不保存 `.events.jsonl`，因为流式 update / subagent 快照可能非常大；常规排障优先查看 `.log`、`youngflow.log`、`session.html` 和 `flow-report.html`。
 
 日志中的关键指标：
 ```
