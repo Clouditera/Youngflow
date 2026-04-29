@@ -147,6 +147,7 @@ function createAgentDir(opts: {
           input: ["text"],
           contextWindow: 200000,
           maxTokens: 16384,
+          ...(opts.provider === "deepseek" ? { reasoning: true } : {}),
         },
       ],
     };
