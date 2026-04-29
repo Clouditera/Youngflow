@@ -18,7 +18,7 @@ import path from "node:path";
 import { debug } from "./logger.js";
 
 const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
-const CUSTOM_PROVIDER = "youngflow";
+const FALLBACK_PROVIDER = "youngflow";
 
 const API_TYPE_MAP: Record<string, string> = {
   openai: "openai-completions",
@@ -68,7 +68,7 @@ export function resolveModelConfig(
   }
 
   const isCustom = !!baseUrl;
-  const provider = isCustom ? CUSTOM_PROVIDER : proto;
+  const provider = isCustom ? (proto || FALLBACK_PROVIDER) : proto;
   let modelString = `${provider}/${modelName}`;
   if (effort) modelString += `:${effort}`;
 
