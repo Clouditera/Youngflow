@@ -12,6 +12,7 @@
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { formatDebugMessage, formatLogTime } from "./log-format.js";
 
 // ---------------------------------------------------------------------------
 // Log levels
@@ -52,6 +53,12 @@ export function attachFileHandler(filePath: string): void {
 
 export function enableJsonLog(): void {
   jsonLogEnabled = true;
+}
+
+export function resetLoggerForTest(): void {
+  globalLevel = LogLevel.INFO;
+  logFilePath = undefined;
+  jsonLogEnabled = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +178,7 @@ export interface ToolCallEvent {
   event: "tool_call";
   stage: string;
   tool: string;
-  args_summary: string;
+  args_summary: string; // Arguments only; do not include the tool name.
   elapsed_s: number;
   status: "ok" | "error";
   error_summary?: string;
@@ -275,11 +282,12 @@ export function logEvent(event: YoungFlowEvent): void {
   const ts = new Date().toISOString();
   const { module, level, text } = formatEvent(event);
 
+  const tsShort = formatLogTime(new Date(ts));
+
   // stderr: JSON or text (mutually exclusive)
   if (jsonLogEnabled) {
     process.stderr.write(JSON.stringify({ ts, ...event }) + "\n");
   } else if (level >= globalLevel) {
-    const tsShort = ts.slice(11, 19);
     process.stderr.write(
       `${tsShort} [youngflow.${module}] ${LEVEL_NAMES[level]} ${text}\n`,
     );
@@ -290,7 +298,7 @@ export function logEvent(event: YoungFlowEvent): void {
     try {
       appendFileSync(
         logFilePath,
-        `${ts.slice(11, 19)} [youngflow.${module}] ${LEVEL_NAMES[level]} ${text}\n`,
+        `${tsShort} [youngflow.${module}] ${LEVEL_NAMES[level]} ${text}\n`,
         "utf-8",
       );
     } catch {
@@ -304,13 +312,15 @@ export function logEvent(event: YoungFlowEvent): void {
 // ---------------------------------------------------------------------------
 
 export function debug(source: string, level: "debug" | "info" | "warning" | "error", msg: string, ...args: unknown[]): void {
-  const formatted = args.length === 0 ? msg : formatMsg(msg, args);
+  const formatted = formatDebugMessage(msg, args);
   logEvent({ category: "debug", event: "debug", source, level, message: formatted });
 }
 
-function formatMsg(msg: string, args: unknown[]): string {
-  let i = 0;
-  return msg.replace(/%s/g, () => (i < args.length ? String(args[i++]) : "%s"));
+export function logFlowMessage(message: string, opts: { stderr?: boolean } = {}): void {
+  if (opts.stderr !== false) {
+    process.stderr.write(message + "\n");
+  }
+  logEvent({ category: "debug", event: "debug", source: "flow", level: "info", message });
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +343,7 @@ function formatEvent(event: YoungFlowEvent): FormattedEvent {
         text:
           `flow_start: ${event.flow}` +
           ` | work_dir=${event.work_dir}` +
+          ` | output_dir=${event.output_dir}` +
           ` | model=${event.model}` +
           ` | parallel=${event.max_parallel}` +
           (event.resume ? " | resume=true" : ""),
@@ -430,7 +441,9 @@ function formatEvent(event: YoungFlowEvent): FormattedEvent {
       return {
         module: "runner",
         level: LogLevel.INFO,
-        text: `[${event.stage}] [${event.elapsed_s}s] ${event.tool}: ${event.args_summary}`,
+        text: event.args_summary
+          ? `[${event.stage}] [${event.elapsed_s}s] ${event.tool}: ${event.args_summary}`
+          : `[${event.stage}] [${event.elapsed_s}s] ${event.tool}`,
       };
     case "api_error":
       return {

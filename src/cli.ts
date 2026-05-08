@@ -5,7 +5,7 @@
  * Engine built-in inputs (work_dir, output_dir) have auto-filled defaults.
  */
 
-import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, statSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -14,7 +14,9 @@ import fg from "fast-glob";
 import { parseFlow } from "./spec.js";
 import { Orchestrator } from "./orchestrator.js";
 import * as report from "./report.js";
-import { setLevel, attachFileHandler, enableJsonLog, logEvent, LogLevel } from "./logger.js";
+import { setLevel, attachFileHandler, enableJsonLog, logEvent, logFlowMessage, LogLevel } from "./logger.js";
+
+
 
 function loadVersion(): string {
   try {
@@ -61,7 +63,7 @@ export function main(): void {
     console.log(`  ${"--resume".padEnd(25)} Resume from last checkpoint`);
     console.log(`  ${"--max-parallel N".padEnd(25)} Override max parallel`);
     console.log(`  ${"--list-stages".padEnd(25)} List stages and exit`);
-    console.log(`  ${"--json-log".padEnd(25)} Output structured NDJSON to stdout`);
+    console.log(`  ${"--json-log".padEnd(25)} Output structured NDJSON to stderr`);
     console.log(`  ${"--trace-events".padEnd(25)} Save compacted raw pi event stream per stage`);
     console.log(`  ${"-V, --version".padEnd(25)} Show version and exit`);
     console.log();
@@ -98,7 +100,7 @@ export function main(): void {
     .option("--max-parallel <n>", "Override max parallel", parseInt)
     .option("--list-stages", "List stages and exit")
     .option("-v, --verbose", "Verbose logging")
-    .option("--json-log", "Output structured NDJSON to stdout")
+    .option("--json-log", "Output structured NDJSON to stderr")
     .option("--trace-events", "Save compacted raw pi NDJSON event stream per stage");
 
   // Dynamic flags from flow inputs
@@ -220,7 +222,6 @@ async function runFlow(
   });
 
   attachFileHandler(orch.workspace.flowLog);
-  setFlowLogPath(orch.workspace.flowLog);
 
   logEvent({
     category: "engine",
@@ -344,24 +345,5 @@ function hasPreviousRun(outputDir: string): boolean {
 let jsonMode = false;
 
 function log(msg: string): void {
-  // In JSON mode, suppress human-readable console output
-  if (!jsonMode) {
-    console.error(msg);
-  }
-  // File log always gets text
-  try {
-    appendFileSync(
-      flowLogPath!,
-      `${new Date().toISOString().slice(11, 19)} [youngflow.flow] ${msg}\n`,
-      "utf-8",
-    );
-  } catch {
-    // file not yet attached or write error — ignore
-  }
-}
-
-let flowLogPath: string | undefined;
-
-function setFlowLogPath(p: string): void {
-  flowLogPath = p;
+  logFlowMessage(msg, { stderr: !jsonMode });
 }

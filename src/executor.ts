@@ -20,8 +20,9 @@ import {
   type RunConfig,
   type RunResult,
   Runner,
-  formatTool,
+  formatToolCallDisplay,
 } from "./runner.js";
+
 import type { FlowSpec, StageSpec, TaskSpec } from "./spec.js";
 import { resolveAgent } from "./spec.js";
 import { Workspace } from "./workspace.js";
@@ -74,7 +75,8 @@ export class StageEventLogger implements EventHandler {
     args: Record<string, any>,
     elapsedS: number,
   ): void {
-    this.writeLog(`  [${elapsedS.toFixed(0)}s] ${formatTool(toolName, args)}`);
+    this.writeLog(`  [${elapsedS.toFixed(0)}s] ${formatToolCallDisplay(toolName, args)}`);
+
   }
 
   onToolEnd(

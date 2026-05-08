@@ -13,6 +13,12 @@ const { globSync } = fg;
 import type { EngineConfig } from "./engine-config.js";
 import type { ModelConfig } from "./model-config.js";
 import { logEvent, debug } from "./logger.js";
+import {
+  formatToolArgsSummary,
+  formatToolCallDisplay,
+  stringifyLogValue,
+  truncateLogText,
+} from "./log-format.js";
 
 
 // ---------------------------------------------------------------------------
@@ -298,13 +304,13 @@ export class Runner {
             const toolName = event.toolName ?? "unknown";
             const args = event.args ?? {};
             toolCalls.push(toolName);
-            const summary = formatTool(toolName, args);
+            const summary = formatToolArgsSummary(toolName, args);
             logEvent({
               category: "agent",
               event: "tool_call",
               stage: stageId,
               tool: toolName,
-              args_summary: summary.length > 200 ? summary.slice(0, 200) + "..." : summary,
+              args_summary: truncateLogText(summary),
               elapsed_s: Math.round(elapsedS),
               status: "ok",
             });
@@ -313,7 +319,7 @@ export class Runner {
             const isErr = event.isError ?? false;
             const toolName = event.toolName ?? "";
             if (isErr) {
-              const errResult = String(event.result ?? "").slice(0, 200);
+              const errResult = truncateLogText(stringifyLogValue(event.result));
               logEvent({
                 category: "agent",
                 event: "tool_call",
@@ -540,38 +546,9 @@ function extractSubagentUsage(event: Record<string, any>): [number, number] {
   return [subIn, subOut];
 }
 
-export function formatTool(toolName: string, args: Record<string, any>): string {
-  if (toolName === "read") {
-    const p = args.path ?? "";
-    const suffix = fmtReadRange(args);
-    return p ? `read: ${shortPath(p)}${suffix}` : "read";
-  }
-  if (toolName === "write" || toolName === "edit") {
-    const p = args.path ?? "";
-    return p ? `${toolName}: ${shortPath(p)}` : toolName;
-  }
-  if (toolName === "bash") {
-    const cmd = (args.command ?? "").replace(/\n/g, " ").trim();
-    return cmd.length > 100 ? `bash: ${cmd.slice(0, 97)}...` : `bash: ${cmd}`;
-  }
-  return toolName;
-}
-
-function fmtReadRange(args: Record<string, any>): string {
-  const offset = args.offset;
-  const limit = args.limit;
-  if (offset != null && limit != null) return ` [${offset}:${offset + limit}]`;
-  if (offset != null) return ` [${offset}:]`;
-  if (limit != null) return ` [:${limit}]`;
-  return "";
-}
-
-function shortPath(p: string, maxParts = 4): string {
-  const parts = p.split("/");
-  return parts.length <= maxParts
-    ? p
-    : "..." + parts.slice(-maxParts).join("/");
-}
+export { stringifyLogValue as stringifyToolResult } from "./log-format.js";
+export { formatToolArgsSummary, formatToolArgsSummary as formatToolArgs } from "./log-format.js";
+export { formatToolCallDisplay, formatToolCallDisplay as formatTool } from "./log-format.js";
 
 function findLatestSession(
   sessionDir: string | undefined,

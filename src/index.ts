@@ -8,7 +8,18 @@ export type { FlowResult } from "./orchestrator.js";
 export { Executor, StageEventLogger } from "./executor.js";
 export type { StageResult } from "./executor.js";
 
-export { Runner, loadEnvFile, classifyError, formatTool, ErrorKind } from "./runner.js";
+export {
+  Runner,
+  loadEnvFile,
+  classifyError,
+  formatTool,
+  formatToolArgs,
+  stringifyToolResult,
+  formatToolCallDisplay,
+  formatToolArgsSummary,
+  ErrorKind,
+} from "./runner.js";
+
 export type { RunResult, RunConfig, EventHandler } from "./runner.js";
 
 export { Workspace } from "./workspace.js";

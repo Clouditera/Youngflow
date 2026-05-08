@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyError, ErrorKind, formatTool, loadEnvFile, Runner, defaultRunConfig } from "./runner.js";
+import { classifyError, ErrorKind, formatTool, formatToolArgs, loadEnvFile, Runner, defaultRunConfig } from "./runner.js";
 import type { RunResult } from "./runner.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -152,6 +152,39 @@ describe("formatTool", () => {
 
   it("returns tool name for unknown tools", () => {
     expect(formatTool("my_tool", { foo: "bar" })).toBe("my_tool");
+  });
+});
+
+describe("formatToolArgs", () => {
+  it("formats read args without tool name", () => {
+    expect(formatToolArgs("read", { path: "/f.ts", offset: 10, limit: 20 })).toBe(
+      "/f.ts [10:30]",
+    );
+  });
+
+  it("formats write/edit args without tool name", () => {
+    expect(formatToolArgs("write", { path: "/a.ts" })).toBe("/a.ts");
+    expect(formatToolArgs("edit", { path: "/a.ts" })).toBe("/a.ts");
+  });
+
+  it("formats bash args without tool name", () => {
+    expect(formatToolArgs("bash", { command: "echo hi" })).toBe("echo hi");
+  });
+
+  it("returns empty args for unknown tools", () => {
+    expect(formatToolArgs("my_tool", { foo: "bar" })).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stringifyToolResult
+// ---------------------------------------------------------------------------
+
+describe("stringifyToolResult", () => {
+  it("stringifies object tool error results", async () => {
+    const mod = await import("./runner.js") as any;
+    expect(mod.stringifyToolResult({ message: "bad write" })).toBe("bad write");
+    expect(mod.stringifyToolResult({ code: "EIO" })).toBe('{"code":"EIO"}');
   });
 });
 
