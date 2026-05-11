@@ -6,6 +6,7 @@
  */
 
 import { setMaxListeners } from "node:events";
+setMaxListeners(0);
 import { spawn, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
