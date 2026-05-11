@@ -33,6 +33,9 @@ export interface RunResult {
   turns: number;
   tokensIn: number;
   tokensOut: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
+  tokensTotal: number;
   apiErrors: number;
   retries: number;
   lastError?: string;
@@ -54,6 +57,7 @@ export interface RunConfig {
   stageId: string;
   sessionFile?: string;
   workDir?: string;  // pi process cwd (target project path)
+  abortSignal?: AbortSignal;
 }
 
 export function defaultRunConfig(overrides: Partial<RunConfig> = {}): RunConfig {
@@ -249,6 +253,9 @@ export class Runner {
       let turnCount = 0;
       let totalIn = 0;
       let totalOut = 0;
+      let totalCacheRead = 0;
+      let totalCacheWrite = 0;
+      let totalTokens = 0;
       let apiErrors = 0;
       let retries = 0;
       let lastError: string | undefined;
@@ -266,11 +273,17 @@ export class Runner {
         }, idleTimeoutSec * 1000);
       };
 
+      const abortProcess = () => {
+        proc.kill();
+      };
+
       const idleTimeoutSec = this.engineConfig.idleTimeout;
       timeoutTimer = setTimeout(() => {
         logEvent({ category: "agent", event: "timeout", stage: stageId, timeout_s: config.timeout });
         proc.kill();
       }, config.timeout * 1000);
+
+      config.abortSignal?.addEventListener("abort", abortProcess, { once: true });
 
       resetIdle();
 
@@ -333,18 +346,28 @@ export class Runner {
               handler?.onToolEnd(toolName, true, errResult, elapsedS);
             }
             if (toolName === "subagent") {
-              const [subIn, subOut] = extractSubagentUsage(event);
+              const [subIn, subOut, subCacheRead, subCacheWrite, subTotal] = extractSubagentUsage(event);
               totalIn += subIn;
               totalOut += subOut;
+              totalCacheRead += subCacheRead;
+              totalCacheWrite += subCacheWrite;
+              totalTokens += subTotal;
             }
           } else if (eventType === "message_end") {
             const msg = event.message ?? {};
             const content = msg.content ?? [];
             const usage = msg.usage ?? {};
             const inTok = Math.max(usage.input ?? 0, 0);
-            const outTok = usage.output ?? 0;
+            const outTok = Math.max(usage.output ?? 0, 0);
+            const cacheReadTok = Math.max(usage.cacheRead ?? 0, 0);
+            const cacheWriteTok = Math.max(usage.cacheWrite ?? 0, 0);
+            const computedMessageTotal = inTok + outTok + cacheReadTok + cacheWriteTok;
+            const messageTotal = Math.max(usage.totalTokens ?? 0, computedMessageTotal);
             totalIn += inTok;
             totalOut += outTok;
+            totalCacheRead += cacheReadTok;
+            totalCacheWrite += cacheWriteTok;
+            totalTokens += messageTotal;
 
             const stopReason = msg.stopReason ?? "";
             const errMsgField = msg.errorMessage ?? "";
@@ -404,6 +427,7 @@ export class Runner {
       proc.on("close", (code) => {
         if (idleTimer) clearTimeout(idleTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        config.abortSignal?.removeEventListener("abort", abortProcess);
 
         const durationMs = Date.now() - startMs;
 
@@ -431,6 +455,9 @@ export class Runner {
           turns: turnCount,
           tokensIn: totalIn,
           tokensOut: totalOut,
+          tokensCacheRead: totalCacheRead,
+          tokensCacheWrite: totalCacheWrite,
+          tokensTotal: Math.max(totalTokens, totalIn + totalOut + totalCacheRead + totalCacheWrite),
           apiErrors,
           retries,
           lastError,
@@ -448,6 +475,9 @@ export class Runner {
           tools: toolCalls.length,
           tokens_in: totalIn,
           tokens_out: totalOut,
+          tokens_cache_read: totalCacheRead,
+          tokens_cache_write: totalCacheWrite,
+          tokens_total: Math.max(totalTokens, totalIn + totalOut + totalCacheRead + totalCacheWrite),
           api_errors: apiErrors,
           retries,
           final_stop: finalStopReason,
@@ -461,6 +491,7 @@ export class Runner {
         logEvent({ category: "stage", event: "process_error", stage: stageId, error: String(err) });
         if (idleTimer) clearTimeout(idleTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        config.abortSignal?.removeEventListener("abort", abortProcess);
         if (proc.exitCode === null) proc.kill();
         resolve({
           exitCode: -1,
@@ -469,6 +500,9 @@ export class Runner {
           turns: 0,
           tokensIn: 0,
           tokensOut: 0,
+          tokensCacheRead: 0,
+          tokensCacheWrite: 0,
+          tokensTotal: 0,
           apiErrors: 0,
           retries: 0,
           finalHasContent: false,
@@ -531,19 +565,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function extractSubagentUsage(event: Record<string, any>): [number, number] {
+function extractSubagentUsage(event: Record<string, any>): [number, number, number, number, number] {
   const result = event.result;
-  if (typeof result !== "object" || result === null) return [0, 0];
+  if (typeof result !== "object" || result === null) return [0, 0, 0, 0, 0];
   const details = result.details;
-  if (typeof details !== "object" || details === null) return [0, 0];
+  if (typeof details !== "object" || details === null) return [0, 0, 0, 0, 0];
   let subIn = 0;
   let subOut = 0;
+  let subCacheRead = 0;
+  let subCacheWrite = 0;
+  let subTotal = 0;
   for (const r of details.results ?? []) {
     const usage = r.usage ?? {};
-    subIn += usage.input ?? 0;
-    subOut += usage.output ?? 0;
+    const inTok = Math.max(usage.input ?? 0, 0);
+    const outTok = Math.max(usage.output ?? 0, 0);
+    const cacheReadTok = Math.max(usage.cacheRead ?? 0, 0);
+    const cacheWriteTok = Math.max(usage.cacheWrite ?? 0, 0);
+    const computed = inTok + outTok + cacheReadTok + cacheWriteTok;
+    subIn += inTok;
+    subOut += outTok;
+    subCacheRead += cacheReadTok;
+    subCacheWrite += cacheWriteTok;
+    subTotal += Math.max(usage.totalTokens ?? 0, computed);
   }
-  return [subIn, subOut];
+  return [subIn, subOut, subCacheRead, subCacheWrite, Math.max(subTotal, subIn + subOut + subCacheRead + subCacheWrite)];
 }
 
 export { stringifyLogValue as stringifyToolResult } from "./log-format.js";

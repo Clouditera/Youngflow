@@ -127,6 +127,8 @@ export class StageEventLogger implements EventHandler {
       `DONE: exit=${result.exitCode} duration=${result.durationMs}ms ` +
         `turns=${result.turns} tools=${result.toolCalls.length} ` +
         `tokens_in=${result.tokensIn} tokens_out=${result.tokensOut} ` +
+        `tokens_cache_read=${result.tokensCacheRead} tokens_cache_write=${result.tokensCacheWrite} ` +
+        `tokens_total=${result.tokensTotal} ` +
         `api_errors=${result.apiErrors} retries=${result.retries} ` +
         `final_stop=${result.finalStopReason}`,
     );
@@ -264,6 +266,7 @@ export class Executor {
     private workDir: string,
     private flowInputs: Record<string, any>,
     private traceEvents = false,
+    private abortSignal?: AbortSignal,
   ) {}
 
   async execute(
@@ -351,6 +354,7 @@ export class Executor {
           stageId,
           sessionFile,
           workDir: this.workDir,
+          abortSignal: this.abortSignal,
         },
         handler,
       );

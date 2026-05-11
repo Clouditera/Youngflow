@@ -28,6 +28,9 @@ interface StageReport {
   tools: number;
   tokens_in: number;
   tokens_out: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
+  tokens_total: number;
   turns: number;
   api_errors: number;
   session_html: string | undefined;
@@ -47,6 +50,9 @@ function emptyReport(id: string): StageReport {
     tools: 0,
     tokens_in: 0,
     tokens_out: 0,
+    tokens_cache_read: 0,
+    tokens_cache_write: 0,
+    tokens_total: 0,
     turns: 0,
     api_errors: 0,
     session_html: undefined,
@@ -128,6 +134,9 @@ function aggregateChildren(info: StageReport): void {
   info.tools = info.children.reduce((s, c) => s + c.tools, 0);
   info.tokens_in = info.children.reduce((s, c) => s + c.tokens_in, 0);
   info.tokens_out = info.children.reduce((s, c) => s + c.tokens_out, 0);
+  info.tokens_cache_read = info.children.reduce((s, c) => s + c.tokens_cache_read, 0);
+  info.tokens_cache_write = info.children.reduce((s, c) => s + c.tokens_cache_write, 0);
+  info.tokens_total = info.children.reduce((s, c) => s + c.tokens_total, 0);
   if (
     info.status === "pending" &&
     info.children.some((c) => c.status === "success")
@@ -171,6 +180,11 @@ function parseStageLog(logsDir: string, stageId: string): StageReport {
     result.tools = sumAll(/tools=(\d+)/g, content);
     result.tokens_in = sumAll(/tokens_in=(\d+)/g, content);
     result.tokens_out = sumAll(/tokens_out=(\d+)/g, content);
+    result.tokens_cache_read = sumAll(/tokens_cache_read=(\d+)/g, content);
+    result.tokens_cache_write = sumAll(/tokens_cache_write=(\d+)/g, content);
+    result.tokens_total = sumAll(/tokens_total=(\d+)/g, content);
+    const computedTotal = result.tokens_in + result.tokens_out + result.tokens_cache_read + result.tokens_cache_write;
+    if (result.tokens_total <= 0 || result.tokens_total < computedTotal) result.tokens_total = computedTotal;
     result.api_errors = sumAll(/api_errors=(\d+)/g, content);
   }
 
@@ -369,6 +383,9 @@ function renderHtml(
   const totalTools = stages.reduce((s, st) => s + st.tools, 0);
   const totalIn = stages.reduce((s, st) => s + st.tokens_in, 0);
   const totalOut = stages.reduce((s, st) => s + st.tokens_out, 0);
+  const totalCacheRead = stages.reduce((s, st) => s + st.tokens_cache_read, 0);
+  const totalCacheWrite = stages.reduce((s, st) => s + st.tokens_cache_write, 0);
+  const totalTokens = stages.reduce((s, st) => s + st.tokens_total, 0);
   const completed = stages.filter((s) => s.status === "success").length;
 
   // Graph

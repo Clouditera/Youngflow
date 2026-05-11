@@ -90,6 +90,33 @@ describe("logger", () => {
     expect(parsed.output_dir).toBe("/out");
   });
 
+  it("emits cache-aware stage_done fields in json mode", () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    enableJsonLog();
+
+    logEvent({
+      category: "stage",
+      event: "stage_done",
+      stage: "s1",
+      exit_code: 0,
+      duration_ms: 10,
+      turns: 1,
+      tools: 2,
+      tokens_in: 10,
+      tokens_out: 3,
+      tokens_cache_read: 100,
+      tokens_cache_write: 5,
+      tokens_total: 118,
+      api_errors: 0,
+      retries: 0,
+    });
+
+    const parsed = JSON.parse(String(write.mock.calls[0][0]));
+    expect(parsed.tokens_cache_read).toBe(100);
+    expect(parsed.tokens_cache_write).toBe(5);
+    expect(parsed.tokens_total).toBe(118);
+  });
+
   it("writes human-readable file logs", () => {
     const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const dir = mkdtempSync(path.join(os.tmpdir(), "youngflow-logger-"));

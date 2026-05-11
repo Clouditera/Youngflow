@@ -91,6 +91,18 @@ export interface FlowEndEvent {
   stages_failed: number;
 }
 
+export interface FlowTimeoutStartEvent {
+  category: "engine";
+  event: "flow_timeout_start";
+  timeout_s: number;
+}
+
+export interface FlowTimeoutEvent {
+  category: "engine";
+  event: "flow_timeout";
+  timeout_s: number;
+}
+
 export interface CheckpointSaveEvent {
   category: "engine";
   event: "checkpoint_save";
@@ -129,6 +141,9 @@ export interface StageDoneEvent {
   tools: number;
   tokens_in: number;
   tokens_out: number;
+  tokens_cache_read?: number;
+  tokens_cache_write?: number;
+  tokens_total?: number;
   api_errors: number;
   retries: number;
   final_stop?: string;
@@ -252,6 +267,8 @@ export type YoungFlowEvent =
   // engine
   | FlowStartEvent
   | FlowEndEvent
+  | FlowTimeoutStartEvent
+  | FlowTimeoutEvent
   | CheckpointSaveEvent
   | CheckpointLoadEvent
   | ReportRefreshEvent
@@ -358,6 +375,18 @@ function formatEvent(event: YoungFlowEvent): FormattedEvent {
           ` | completed=${event.stages_completed}` +
           ` | failed=${event.stages_failed}`,
       };
+    case "flow_timeout_start":
+      return {
+        module: "flow",
+        level: LogLevel.INFO,
+        text: `flow timeout armed: ${event.timeout_s}s`,
+      };
+    case "flow_timeout":
+      return {
+        module: "flow",
+        level: LogLevel.ERROR,
+        text: `Flow timeout after ${event.timeout_s}s`,
+      };
     case "checkpoint_save":
       return {
         module: "checkpoint",
@@ -393,6 +422,9 @@ function formatEvent(event: YoungFlowEvent): FormattedEvent {
           ` duration=${event.duration_ms}ms` +
           ` turns=${event.turns} tools=${event.tools}` +
           ` tokens_in=${event.tokens_in} tokens_out=${event.tokens_out}` +
+          ` tokens_cache_read=${event.tokens_cache_read ?? 0}` +
+          ` tokens_cache_write=${event.tokens_cache_write ?? 0}` +
+          ` tokens_total=${event.tokens_total ?? event.tokens_in + event.tokens_out + (event.tokens_cache_read ?? 0) + (event.tokens_cache_write ?? 0)}` +
           ` api_errors=${event.api_errors} retries=${event.retries}` +
           (event.final_stop ? ` final_stop=${event.final_stop}` : ""),
       };
