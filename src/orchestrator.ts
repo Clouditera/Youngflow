@@ -102,9 +102,12 @@ export class Orchestrator {
   readonly checkpoint: Checkpoint;
   readonly runner: Runner;
   readonly workDir: string;
-  readonly executor: Executor;
+  executor: Executor;
 
   private stageMap: Map<string, StageSpec>;
+  private flowTimedOut = false;
+  private flowTimeoutTimer?: ReturnType<typeof setTimeout>;
+  private flowAbortController?: AbortController;
 
   constructor(
     spec: FlowSpec,
@@ -151,6 +154,7 @@ export class Orchestrator {
       this.workDir,
       flowInputs,
       opts.traceEvents ?? false,
+      this.flowAbortController?.signal,
     );
 
     this.stageMap = new Map(spec.stages.map((s) => [s.id, s]));
@@ -181,12 +185,37 @@ export class Orchestrator {
       initialState.route_counts = saved.route_counts ?? {};
     }
 
-    const result = await graph.invoke(initialState);
+    if (this.spec.timeout == null) {
+      const result = await graph.invoke(initialState);
+      return {
+        stageResults: result.stage_results ?? [],
+        extracted: result.extracted ?? {},
+      };
+    }
 
-    return {
-      stageResults: result.stage_results ?? [],
-      extracted: result.extracted ?? {},
-    };
+    logEvent({ category: "engine", event: "flow_timeout_start", timeout_s: this.spec.timeout });
+    this.flowAbortController = new AbortController();
+    this.executor = new Executor(
+      this.runner,
+      this.spec,
+      this.workspace,
+      this.workDir,
+      this.flowInputs,
+      false,
+      this.flowAbortController.signal,
+    );
+    try {
+      const result = await Promise.race([
+        graph.invoke(initialState),
+        this.flowTimeoutPromise(this.spec.timeout),
+      ]);
+      return {
+        stageResults: result.stage_results ?? [],
+        extracted: result.extracted ?? {},
+      };
+    } finally {
+      this.clearFlowTimeout();
+    }
   }
 
   // ------------------------------------------------------------------
@@ -264,6 +293,8 @@ export class Orchestrator {
     const self = this;
 
     builder.addNode(stage.id, async (state: FlowState) => {
+      self.throwIfFlowTimedOut(stage.id);
+
       if (self.resume && self.checkpoint.isDone(stage.id)) {
         logEvent({ category: "stage", event: "stage_skipped", stage: stage.id, reason: "resume" });
         const updates: Record<string, any> = {
@@ -330,6 +361,7 @@ export class Orchestrator {
 
     // Gate
     builder.addNode(gateId, async (_state: FlowState) => {
+      self.throwIfFlowTimedOut(stage.id);
       fanoutStartedAt = new Date().toISOString().slice(0, 19);
       return {};
     });
@@ -360,6 +392,7 @@ export class Orchestrator {
 
     // Worker
     builder.addNode(workerId, async (state: FlowState) => {
+      self.throwIfFlowTimedOut(stage.id);
       const iterateFile = state._iterate_file ?? "";
       const stageConfig = state._stage_config ?? {};
 
@@ -420,6 +453,7 @@ export class Orchestrator {
 
     // Collector
     builder.addNode(collectorId, async (state: FlowState) => {
+      self.throwIfFlowTimedOut(stage.id);
       // Resume: skip state extraction, just evaluate routes
       if (self.resume && self.checkpoint.isDone(stage.id)) {
         const updates: Record<string, any> = {
@@ -574,6 +608,36 @@ export class Orchestrator {
   // ------------------------------------------------------------------
   // Helpers
   // ------------------------------------------------------------------
+
+  private flowTimeoutPromise(timeoutSec: number): Promise<never> {
+    return new Promise((_, reject) => {
+      this.flowTimeoutTimer = setTimeout(() => {
+        this.flowTimedOut = true;
+        this.flowAbortController?.abort();
+        logEvent({ category: "engine", event: "flow_timeout", timeout_s: timeoutSec });
+        reject(new FlowExecutionError(
+          `Flow timed out after ${timeoutSec}s`,
+          "<flow>",
+          -1,
+        ));
+      }, timeoutSec * 1000);
+    });
+  }
+
+  private clearFlowTimeout(): void {
+    if (this.flowTimeoutTimer) clearTimeout(this.flowTimeoutTimer);
+    this.flowTimeoutTimer = undefined;
+    this.flowAbortController = undefined;
+  }
+
+  private throwIfFlowTimedOut(stageId: string): void {
+    if (!this.flowTimedOut) return;
+    throw new FlowExecutionError(
+      `Flow timed out after ${this.spec.timeout}s`,
+      stageId,
+      -1,
+    );
+  }
 
   /**
    * Evaluate routes for a resume-skipped stage.
