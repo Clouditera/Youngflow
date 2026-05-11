@@ -73,6 +73,7 @@ export interface StageSpec {
 export interface FlowSpec {
   readonly sourcePath: string;
   readonly flowDir: string;
+  readonly timeout: number | undefined;
   readonly agentsDir: string;
   readonly skillsDir: string;
   readonly tasksDir: string;
@@ -148,6 +149,7 @@ export function parseFlow(
   return {
     sourcePath: yamlPath,
     flowDir,
+    timeout: raw.timeout ?? undefined,
     agentsDir,
     skillsDir,
     tasksDir,

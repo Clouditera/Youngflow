@@ -13,6 +13,11 @@ properties:
     type: string
     enum: ["1.0"]
 
+  timeout:
+    type: integer
+    minimum: 1
+    description: Flow 级总超时秒数；从 flow 开始执行到超时为止，覆盖所有 stage / task 的总耗时
+
   # ── 资产目录 ──
   artifacts:
     type: object

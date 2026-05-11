@@ -5,6 +5,7 @@
  * Responsibilities: DAG construction, fan-out dispatch, state routing.
  */
 
+import { setMaxListeners } from "node:events";
 import path from "node:path";
 import { Annotation, StateGraph, Send, END, START } from "@langchain/langgraph";
 import { Checkpoint } from "./checkpoint.js";
@@ -195,6 +196,7 @@ export class Orchestrator {
 
     logEvent({ category: "engine", event: "flow_timeout_start", timeout_s: this.spec.timeout });
     this.flowAbortController = new AbortController();
+    setMaxListeners(0, this.flowAbortController.signal);
     this.executor = new Executor(
       this.runner,
       this.spec,

@@ -119,6 +119,7 @@ flows/vulnhunt/
 
 ```yaml
 version: "1.0"
+timeout: 7200
 
 # ── 资产目录（相对于 flow.yaml 所在目录）──
 artifacts:
@@ -150,6 +151,7 @@ inputs:
     type: path
 
 # ── Pipeline 定义 ──
+timeout: 7200           # Flow 级总超时秒数（可选）：覆盖整个流水线总运行时长
 stages:
   - id: profiler
     name: 工程画像
@@ -172,6 +174,13 @@ stages:
         when: profiler.is_valid == false
       - to: enumerators              # 兜底路由
 ```
+
+| `timeout` | int | — | Flow 级总超时秒数（可选），覆盖整个流水线从开始执行到结束的总运行时长 |
+| `version` | string | — | Flow 定义版本 |
+| `artifacts` | object | 默认目录 | 资产目录配置 |
+| `defaults` | object | — | 默认配置 |
+| `inputs` | object | — | 运行时输入参数 |
+| `stages` | list | **必填** | Pipeline 阶段列表 |
 
 ### Stage 类型
 
@@ -250,7 +259,7 @@ stages:
 | `skills` | list | **必填**(single/map) | Skill 目录名列表 |
 | `task` | string | — | Task 文件名（相对 tasks 目录） |
 | `prompt` | string | — | 提示词模板，支持 `${...}` 变量 |
-| `timeout` | int | 1800 | 超时秒数 |
+| `timeout` | int | 1800 | 节点级超时秒数 |
 | `model` | string | defaults.model | 覆盖模型 |
 | `agent` | string | defaults.agent | 覆盖 agent 文件名 |
 | `error_strategy` | string | `stop` | `stop` / `continue` |
