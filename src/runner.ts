@@ -5,6 +5,7 @@
  * Event handling is delegated to an EventHandler interface.
  */
 
+import { setMaxListeners } from "node:events";
 import { spawn, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -283,6 +284,7 @@ export class Runner {
         proc.kill();
       }, config.timeout * 1000);
 
+      if (config.abortSignal) setMaxListeners(0, config.abortSignal);
       config.abortSignal?.addEventListener("abort", abortProcess, { once: true });
 
       resetIdle();
