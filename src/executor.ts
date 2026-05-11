@@ -266,7 +266,6 @@ export class Executor {
     private workDir: string,
     private flowInputs: Record<string, any>,
     private traceEvents = false,
-    private abortSignal?: AbortSignal,
   ) {}
 
   async execute(
@@ -354,7 +353,6 @@ export class Executor {
           stageId,
           sessionFile,
           workDir: this.workDir,
-          abortSignal: this.abortSignal,
         },
         handler,
       );
