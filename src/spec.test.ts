@@ -56,5 +56,85 @@ describe("parseFlow", () => {
 
     const spec = parseFlow(flowPath);
     expect(spec.timeout).toBeUndefined();
+    expect(spec.recursionLimit).toBeUndefined();
+  });
+
+  it("parses optional flow-level recursion_limit", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "recursion_limit: 200",
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.recursionLimit).toBe(200);
+  });
+
+  it("rejects invalid flow-level recursion_limit", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "recursion_limit: 0",
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    expect(() => parseFlow(flowPath)).toThrow(/recursion_limit/);
+  });
+
+  it("accepts join stages without skills", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    routes:",
+      "      - to: joiner",
+      "  - id: joiner",
+      "    type: join",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[1].type).toBe("join");
+    expect(spec.stages[1].skills).toEqual([]);
+  });
+
+  it("still requires max_loops for backward routes from join", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    routes:",
+      "      - to: joiner",
+      "  - id: joiner",
+      "    type: join",
+      "    routes:",
+      "      - to: first",
+    ].join("\n"));
+
+    expect(() => parseFlow(flowPath)).toThrow(/requires max_loops/);
   });
 });

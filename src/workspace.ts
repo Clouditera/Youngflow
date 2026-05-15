@@ -12,13 +12,21 @@
  *   └── [flow outputs]
  */
 
-import { mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 const { globSync } = fg;
 
 const ENGINE_DIR = ".youngflow";
 const SAFE_SEGMENT_RE = /[^A-Za-z0-9._-]+/g;
+const ACTIVE_ENGINE_ENTRIES = [
+  "checkpoints",
+  "logs",
+  "sessions",
+  "flow-report.html",
+  "youngflow.log",
+  "run.yaml",
+];
 
 export class Workspace {
   readonly root: string;
@@ -69,7 +77,49 @@ export class Workspace {
     return s || "item";
   }
 
+  activeEngineEntries(): string[] {
+    return ACTIVE_ENGINE_ENTRIES.filter((entry) => {
+      try {
+        statSync(path.join(this.engine, entry));
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  archiveActiveRun(runId: string): string | undefined {
+    const entries = this.activeEngineEntries();
+    if (entries.length === 0) return undefined;
+
+    const archiveDir = path.join(this.runsDir, runId);
+    try {
+      statSync(archiveDir);
+      throw new Error(`Run archive already exists: ${archiveDir}`);
+    } catch (e: any) {
+      if (e?.code !== "ENOENT") throw e;
+    }
+
+    mkdirSync(archiveDir, { recursive: true });
+    for (const entry of entries) {
+      renameSync(path.join(this.engine, entry), path.join(archiveDir, entry));
+    }
+    return archiveDir;
+  }
+
   // Engine operational directories
+
+  get engineDir(): string {
+    return this.engine;
+  }
+
+  get runsDir(): string {
+    return path.join(this.engine, "runs");
+  }
+
+  get runMetadataPath(): string {
+    return path.join(this.engine, "run.yaml");
+  }
 
   get sessionsDir(): string {
     return path.join(this.engine, "sessions");

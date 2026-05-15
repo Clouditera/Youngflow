@@ -5,7 +5,7 @@
  * Engine built-in inputs (work_dir, output_dir) have auto-filled defaults.
  */
 
-import { existsSync, readFileSync, statSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -13,6 +13,7 @@ import yaml from "js-yaml";
 import fg from "fast-glob";
 import { parseFlow } from "./spec.js";
 import { Orchestrator } from "./orchestrator.js";
+import { Workspace } from "./workspace.js";
 import * as report from "./report.js";
 import { setLevel, attachFileHandler, enableJsonLog, logEvent, logFlowMessage, LogLevel } from "./logger.js";
 
@@ -61,6 +62,8 @@ export function main(): void {
     console.log("Options:");
     console.log(`  ${"--until STAGE".padEnd(25)} Run stages up to STAGE`);
     console.log(`  ${"--resume".padEnd(25)} Resume from last checkpoint`);
+    console.log(`  ${"--continue".padEnd(25)} Continue from existing output artifacts; archive engine state, not checkpoint resume`);
+    console.log(`  ${"--recursion-limit N".padEnd(25)} Override LangGraph engine step limit (default 100)`);
     console.log(`  ${"--max-parallel N".padEnd(25)} Override max parallel`);
     console.log(`  ${"--list-stages".padEnd(25)} List stages and exit`);
     console.log(`  ${"--json-log".padEnd(25)} Output structured NDJSON to stderr`);
@@ -97,6 +100,8 @@ export function main(): void {
     .argument("<flow>", "Flow definition YAML")
     .option("--until <stage>", "Run stages up to STAGE")
     .option("--resume", "Resume from checkpoint")
+    .option("--continue", "Continue from existing output artifacts; archive previous .youngflow engine state and start a new run (not checkpoint resume)")
+    .option("--recursion-limit <n>", "Override LangGraph engine step limit", parseRecursionLimit)
     .option("--max-parallel <n>", "Override max parallel", parseInt)
     .option("--list-stages", "List stages and exit")
     .option("-v, --verbose", "Verbose logging")
@@ -125,6 +130,8 @@ export function main(): void {
 
   // Resolve flow inputs
   const flowInputs = resolveInputs(opts, flowInputsSpec);
+
+  validateRunModeOptions(opts);
 
   // Validate
   if (opts.resume && !flowInputs.output_dir) {
@@ -191,6 +198,7 @@ async function runFlow(
 ): Promise<void> {
   const workDir = flowInputs.work_dir ?? process.cwd();
   const outputDir = flowInputs.output_dir ?? workDir;
+  const continueMode = opts["continue"] === true;
 
   // Setup logging first — before any initialization that may emit events
   if (opts.verbose) setLevel(LogLevel.DEBUG);
@@ -201,13 +209,18 @@ async function runFlow(
 
   const spec = parseFlow(flowYaml, opts.until);
 
-  // Guard: non-resume into existing run
-  if (!opts.resume && hasPreviousRun(outputDir)) {
+  if (continueMode) {
+    const preWorkspace = new Workspace(outputDir);
+    if (hasActiveRun(outputDir)) {
+      preWorkspace.archiveActiveRun(nextArchiveRunId(preWorkspace));
+    }
+  } else if (!opts.resume && hasActiveRun(outputDir)) {
     console.error(
-      `Error: output directory already contains a previous run:\n` +
+      `Error: output directory already contains an active YoungFlow run:\n` +
         `  ${outputDir}\n\n` +
         `Options:\n` +
-        `  --resume              Resume the previous run\n` +
+        `  --resume              Resume checkpoint recovery for the active run\n` +
+        `  --continue            Archive engine state and continue from existing artifacts\n` +
         `  --output-dir <path>   Use a different output directory`,
     );
     process.exit(1);
@@ -218,10 +231,26 @@ async function runFlow(
     outputDir,
     resume: opts.resume,
     maxParallel: opts.maxParallel,
+    recursionLimit: opts.recursionLimit,
     traceEvents: opts.traceEvents,
   });
 
   attachFileHandler(orch.workspace.flowLog);
+
+  const start = Date.now();
+  const runMetadata: Record<string, any> = {
+    run_id: createRunId(new Date(start)),
+    mode: opts.resume ? "resume" : continueMode ? "continue" : "normal",
+    flow: flowYaml,
+    work_dir: workDir,
+    output_dir: outputDir,
+    model: orch.model,
+    max_parallel: orch.maxParallel,
+    recursion_limit: orch.recursionLimit,
+    started_at: new Date(start).toISOString().replace(/\.\d+Z$/, "Z"),
+    status: "running",
+  };
+  writeRunMetadata(orch.workspace.runMetadataPath, runMetadata);
 
   logEvent({
     category: "engine",
@@ -241,6 +270,7 @@ async function runFlow(
   }
   log(`   Model:    ${orch.model}`);
   log(`   Parallel: ${orch.maxParallel}`);
+  log(`   RecLimit: ${orch.recursionLimit}`);
   if (opts.until) log(`   Until:    ${opts.until}`);
   if (opts.resume) {
     const completed = orch.checkpoint.completedStages();
@@ -248,11 +278,26 @@ async function runFlow(
       `   Resume:   yes (completed: ${completed.length ? completed.join(", ") : "none"})`,
     );
   }
+  if (continueMode) log("   Continue: yes (fresh engine state over existing artifacts)");
   log("");
 
-  const start = Date.now();
-  const result = await orch.run();
-  const elapsed = ((Date.now() - start) / 1000).toFixed(0);
+  let result;
+  try {
+    result = await orch.run();
+  } catch (e) {
+    const durationMs = Date.now() - start;
+    writeRunMetadata(orch.workspace.runMetadataPath, {
+      ...runMetadata,
+      ended_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+      duration_ms: durationMs,
+      status: "failed",
+      error: e instanceof Error ? e.message : String(e),
+    });
+    report.refresh(spec, orch.workspace);
+    throw e;
+  }
+  const durationMs = Date.now() - start;
+  const elapsed = (durationMs / 1000).toFixed(0);
 
   const stagesCompleted = result.stageResults.filter(
     (r: Record<string, any>) => (r.exit_code ?? 0) === 0,
@@ -264,7 +309,17 @@ async function runFlow(
   logEvent({
     category: "engine",
     event: "flow_end",
-    duration_ms: Date.now() - start,
+    duration_ms: durationMs,
+    stages_total: result.stageResults.length,
+    stages_completed: stagesCompleted,
+    stages_failed: stagesFailed,
+  });
+
+  writeRunMetadata(orch.workspace.runMetadataPath, {
+    ...runMetadata,
+    ended_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    duration_ms: durationMs,
+    status: stagesFailed > 0 ? "failed" : "success",
     stages_total: result.stageResults.length,
     stages_completed: stagesCompleted,
     stages_failed: stagesFailed,
@@ -319,6 +374,8 @@ function listStages(
   console.log("Engine flags:");
   console.log(`  ${"--until STAGE".padEnd(25)} Run stages up to STAGE`);
   console.log(`  ${"--resume".padEnd(25)} Resume from last checkpoint`);
+  console.log(`  ${"--continue".padEnd(25)} Continue from artifacts with fresh engine state`);
+  console.log(`  ${"--recursion-limit N".padEnd(25)} Override LangGraph engine step limit (default 100)`);
   console.log(`  ${"--max-parallel N".padEnd(25)} Override max parallel`);
   console.log(`  ${"--trace-events".padEnd(25)} Save compacted raw pi event stream per stage`);
   console.log();
@@ -332,10 +389,50 @@ function listStages(
   }
 }
 
-function hasPreviousRun(outputDir: string): boolean {
-  const ckptDir = path.join(outputDir, ".youngflow", "checkpoints");
-  if (!existsSync(ckptDir)) return false;
-  return fg.globSync("*.done.yaml", { cwd: ckptDir }).length > 0;
+export function parseRecursionLimit(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error("--recursion-limit must be a positive integer");
+  }
+  return n;
+}
+
+export function createRunId(date = new Date()): string {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+export function validateRunModeOptions(opts: Record<string, any>): void {
+  if (opts.resume && opts["continue"]) {
+    throw new Error("--resume and --continue are mutually exclusive. Use --resume for checkpoint recovery, or --continue to start a new run from existing artifacts.");
+  }
+}
+
+export function hasActiveRun(outputDir: string): boolean {
+  const engineDir = path.join(outputDir, ".youngflow");
+  const directFiles = ["run.yaml", "flow-report.html", "youngflow.log"];
+  if (directFiles.some((f) => existsSync(path.join(engineDir, f)))) return true;
+
+  for (const dir of ["checkpoints", "logs", "sessions"]) {
+    const p = path.join(engineDir, dir);
+    if (existsSync(p) && fg.globSync("**/*", { cwd: p, dot: true }).length > 0) return true;
+  }
+  return false;
+}
+
+export function writeRunMetadata(filePath: string, metadata: Record<string, any>): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, yaml.dump(metadata), "utf-8");
+}
+
+function nextArchiveRunId(workspace: Workspace, now = new Date()): string {
+  const base = createRunId(now);
+  let candidate = base;
+  let n = 1;
+  while (existsSync(path.join(workspace.runsDir, candidate))) {
+    candidate = `${base}-${n}`;
+    n++;
+  }
+  return candidate;
 }
 
 // ---------------------------------------------------------------------------

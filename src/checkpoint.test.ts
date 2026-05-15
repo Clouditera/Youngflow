@@ -89,14 +89,16 @@ describe("Checkpoint", () => {
     const state = {
       extracted: { profiler: { is_valid: true } },
       route_counts: { "a→b": 1 },
-      _route_decision: "b",       // should be excluded
+      fork_context: { origin: "discovery", expected: ["research", "argument"], done: ["research"] },
+      _route_targets: ["b"],       // should be excluded
       stage_results: [{ id: "a" }], // should be excluded
     };
     cp.saveState(state);
     const loaded = cp.loadState();
     expect(loaded.extracted).toEqual({ profiler: { is_valid: true } });
     expect(loaded.route_counts).toEqual({ "a→b": 1 });
-    expect(loaded).not.toHaveProperty("_route_decision");
+    expect(loaded.fork_context).toEqual({ origin: "discovery", expected: ["research", "argument"], done: ["research"] });
+    expect(loaded).not.toHaveProperty("_route_targets");
     expect(loaded).not.toHaveProperty("stage_results");
   });
 

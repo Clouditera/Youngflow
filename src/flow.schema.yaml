@@ -18,6 +18,11 @@ properties:
     minimum: 1
     description: Flow 级总超时秒数；从 flow 开始执行到超时为止，覆盖所有 stage / task 的总耗时
 
+  recursion_limit:
+    type: integer
+    minimum: 1
+    description: LangGraph engine node-step recursion limit；不同于 route.max_loops 业务循环上限
+
   # ── 资产目录 ──
   artifacts:
     type: object
@@ -120,7 +125,7 @@ $defs:
         type: string
       type:
         type: string
-        enum: [single, parallel, map]
+        enum: [single, parallel, map, join]
         default: single
       skills:
         $ref: "#/$defs/skills_field"

@@ -31,6 +31,16 @@ youngflow flows/vulnhunt/flow.yaml \
 # 断点恢复
 youngflow flows/vulnhunt/flow.yaml \
   --output-dir ./output --resume
+
+# 基于已有业务产物开启新一轮（归档旧 .youngflow 引擎态，不复用 pi session/context）
+youngflow flows/vulnhunt/flow.yaml \
+  --work-dir /path/to/project \
+  --output-dir ./output --continue
+
+# 提高 LangGraph engine step budget（loop-heavy flows）
+youngflow flows/vulnhunt/flow.yaml \
+  --work-dir /path/to/project \
+  --output-dir ./output --recursion-limit 200
 ```
 
 ## 架构
@@ -73,7 +83,7 @@ youngflow flows/vulnhunt/flow.yaml \
 | **Task** | 做什么 | `tasks/*.md` | 拼入 user message |
 | **Prompt** | 上下文 | flow.yaml `prompt` | `${...}` 变量替换后拼入 user message |
 
-四层都不含运行时变量；运行时上下文只在 flow prompt 中通过 `${work_dir}` / `${output_dir}` / `${iterate_file}` 注入。
+四层都不含运行时变量；运行时上下文只在 flow prompt 中通过 `${work_dir}` / `${output_dir}` / `${iterate_file}` 注入。user message 组装顺序固定为：先拼 `tasks/*.md` 的 Task 内容，再拼变量替换后的 flow.yaml `prompt` 上下文。
 
 ### 目录分离
 
@@ -82,10 +92,19 @@ youngflow flows/vulnhunt/flow.yaml \
 ```
 output_dir/
 ├── .youngflow/              ← 引擎内部数据（agent 不感知）
+│   ├── run.yaml             当前 run 元数据
 │   ├── checkpoints/         断点恢复文件
 │   ├── logs/                per-stage .log（--trace-events 时另有 .events.jsonl）
 │   ├── sessions/            pi 会话记录 (.jsonl + .html)
-│   └── flow-report.html     执行状态面板（每 stage 完成后实时刷新）
+│   ├── flow-report.html     执行状态面板（每 stage 完成后实时刷新）
+│   └── runs/                --continue 归档的历史引擎态
+│       └── 20260512T123456Z/
+│           ├── run.yaml
+│           ├── checkpoints/
+│           ├── logs/
+│           ├── sessions/
+│           ├── flow-report.html
+│           └── youngflow.log
 │
 ├── profiler/                ← flow 业务产物（干净目录）
 ├── feature_groups/
@@ -282,7 +301,7 @@ stages:
 
 ### Routes 与 State
 
-Flow 的节点转移完全由 `routes` 驱动。每个 stage 执行完后按 `routes` 顺序评估条件，命中第一个就跳转到目标；没有 routes 或所有 routes 都不命中 → flow 终止。
+Flow 的节点转移完全由 `routes` 驱动。每个 stage 执行完后会评估所有带 `when` 的条件路由，所有命中的目标都会被派发；无 `when` 的 route 是 fallback，只在没有任何条件 route 命中时才走第一条 fallback。没有 routes 或没有可用目标 → flow 终止。
 
 #### Routes
 
@@ -295,10 +314,45 @@ routes:
 
 **规则**：
 - 条件格式：`stage_id.key op value`，op 支持 `==`, `!=`, `>`, `>=`, `<`, `<=`
-- 按声明顺序求值，第一个命中的胜出（if/elif/else 模式）
-- 无 `when` 的 route 永远命中，通常作为最后一条兜底
+- 所有带 `when` 且条件为 true 的 route 都会被选中；多个目标会并发派发
+- 如果至少一个条件 route 命中，无 `when` fallback 不会执行
+- 如果没有条件 route 命中，执行第一条 eligible 无 `when` fallback
+- 多条命中 route 指向同一 target 时，同一轮只启动一次该 target
 - 没有 routes 的 stage = flow 终点
 - 回路（指向当前或之前的 stage）必须设置 `max_loops`，防止死循环
+
+#### Join stage
+
+`type: join` 是 engine-only 收口节点，不调用 agent/pi，也不需要 `skills` / `task` / `prompt`。它等待本轮实际派发出去的 branches 全部完成或被 checkpoint skip 后，再评估 join 自己的 routes 一次。
+
+```yaml
+- id: discovery
+  routes:
+    - to: research
+      when: discovery.inv_pending > 0
+    - to: argument
+      when: discovery.hyp_pending > 0
+    - to: report          # fallback: 没有 pending work 时才走
+
+- id: research
+  type: map
+  over: investigations/pending/INV-*.yaml
+  routes:
+    - to: research_argument_join
+
+- id: argument
+  type: map
+  over: hypotheses/pending/HYP-*.yaml
+  routes:
+    - to: research_argument_join
+
+- id: research_argument_join
+  type: join
+  routes:
+    - to: discovery
+      max_loops: 10
+    - to: report
+```
 
 #### State 提取
 
@@ -507,6 +561,42 @@ resume 模式下：
 - 已完成的 single / parallel / map stage 整体跳过
 - 各 stage 的 `extracted` 状态和 `route_counts`（循环计数）从 checkpoint 恢复
 - 产物目录不会被清空（增量执行）
+
+## 基于历史产物继续运行
+
+`--continue` 用于 VulnForge 这类需要复用历史业务产物的新一轮探索。它不同于 `--resume`：
+
+```bash
+youngflow flows/vulnhunt/flow.yaml \
+  --work-dir ./project \
+  --output-dir ./output \
+  --continue
+```
+
+continue 模式下：
+- 保留所有非 `.youngflow` 业务产物，例如 `knowledge/`、`hypotheses/`、`arguments/`、`findings/`、`report/`
+- 将旧 active `.youngflow` 引擎态归档到 `.youngflow/runs/<timestamp>/`
+- 重新创建 active `.youngflow/checkpoints`、`.youngflow/logs`、`.youngflow/sessions`
+- 新 run 从头执行，不复用旧 checkpoint，也不复用 pi session/context
+- 当前 `flow-report.html` 的 Run History 会链接历史 run 的 report/log/sessions
+
+`--resume` 与 `--continue` 互斥。已有 active run 时，普通运行会被保护性阻止；请选择 `--resume`、`--continue` 或新的 `--output-dir`。
+
+## LangGraph recursion limit
+
+YoungFlow 会显式传入 LangGraph engine step budget，默认 `100`，避免依赖 LangGraph 默认 `25` 导致 loop-heavy flow 提前触发 `GraphRecursionError`。
+
+配置优先级：CLI `--recursion-limit` > flow.yaml 顶层 `recursion_limit` > 默认 `100`。
+
+```yaml
+recursion_limit: 200
+```
+
+```bash
+youngflow flows/vulnhunt/flow.yaml --work-dir ./project --output-dir ./output --recursion-limit 200
+```
+
+注意：`recursion_limit` 是 LangGraph engine node-step 上限；`routes[].max_loops` 仍是 YoungFlow flow 层业务循环安全阀，二者语义不同。
 
 ## 运行日志
 

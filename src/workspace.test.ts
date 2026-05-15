@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Workspace } from "./workspace.js";
-import { mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
@@ -65,5 +65,47 @@ describe("Workspace", () => {
 
   it("reportPath", () => {
     expect(ws.reportPath).toContain("flow-report.html");
+  });
+
+  it("archives only active engine entries and preserves business artifacts", () => {
+    mkdirSync(path.join(tmpDir, "knowledge"), { recursive: true });
+    writeFileSync(path.join(tmpDir, "knowledge", "profile.yaml"), "name: demo\n");
+    writeFileSync(ws.runMetadataPath, "run_id: old\n");
+    writeFileSync(ws.reportPath, "<html>old</html>");
+    writeFileSync(ws.flowLog, "old log");
+    writeFileSync(path.join(ws.checkpointsDir, "stage.done.yaml"), "status: success\n");
+    writeFileSync(path.join(ws.logsDir, "stage.log"), "DONE: exit=0 duration=1ms\n");
+    writeFileSync(path.join(ws.sessionsDir, "session.jsonl"), "{}\n");
+    mkdirSync(path.join(ws.runsDir, "existing"), { recursive: true });
+    writeFileSync(path.join(ws.runsDir, "existing", "flow-report.html"), "existing");
+
+    const archiveDir = ws.archiveActiveRun("20260512T123456Z");
+
+    expect(archiveDir).toBe(path.join(ws.runsDir, "20260512T123456Z"));
+    expect(existsSync(path.join(archiveDir!, "run.yaml"))).toBe(true);
+    expect(existsSync(path.join(archiveDir!, "flow-report.html"))).toBe(true);
+    expect(existsSync(path.join(archiveDir!, "youngflow.log"))).toBe(true);
+    expect(existsSync(path.join(archiveDir!, "checkpoints", "stage.done.yaml"))).toBe(true);
+    expect(existsSync(path.join(archiveDir!, "logs", "stage.log"))).toBe(true);
+    expect(existsSync(path.join(archiveDir!, "sessions", "session.jsonl"))).toBe(true);
+    expect(existsSync(path.join(ws.runsDir, "existing", "flow-report.html"))).toBe(true);
+    expect(readFileSync(path.join(tmpDir, "knowledge", "profile.yaml"), "utf-8")).toBe("name: demo\n");
+    expect(existsSync(ws.checkpointsDir)).toBe(false);
+
+    ws.setup();
+    expect(existsSync(ws.checkpointsDir)).toBe(true);
+    expect(existsSync(ws.logsDir)).toBe(true);
+    expect(existsSync(ws.sessionsDir)).toBe(true);
+  });
+
+  it("returns undefined when no active engine entries exist", () => {
+    rmSync(ws.checkpointsDir, { recursive: true, force: true });
+    rmSync(ws.logsDir, { recursive: true, force: true });
+    rmSync(ws.sessionsDir, { recursive: true, force: true });
+    mkdirSync(path.join(ws.runsDir, "old"), { recursive: true });
+
+    expect(ws.archiveActiveRun("new")).toBeUndefined();
+    expect(existsSync(path.join(ws.runsDir, "old"))).toBe(true);
+    expect(existsSync(path.join(ws.runsDir, "new"))).toBe(false);
   });
 });

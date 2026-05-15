@@ -1,0 +1,80 @@
+# Demo Join Flow — v0.2.5 multi-target routing + explicit join
+#
+# Purpose:
+# - Demonstrates default multi-match route evaluation.
+# - Demonstrates no-when fallback semantics.
+# - Demonstrates explicit engine-only type: join fan-in.
+#
+# Automated tests use this flow as a parse/list-stages fixture and execute the
+# same topology with a fake executor, so no real LLM/API credentials are needed.
+
+version: "1.0"
+recursion_limit: 50
+
+artifacts:
+  agents: agents/
+  skills: skills/
+  tasks: tasks/
+
+inputs:
+  work_dir:
+    description: "Demo work directory"
+    type: path
+  output_dir:
+    description: "Demo output directory"
+    type: path
+
+stages:
+  - id: discovery
+    name: Demo discovery
+    skills:
+      - demo-skill
+    task: discovery.md
+    prompt: |
+      Output dir: ${output_dir}
+      Marker inputs:
+      - ${output_dir}/investigations/pending/INV-*.txt
+      - ${output_dir}/hypotheses/pending/HYP-*.txt
+    state:
+      inv_pending:
+        glob: investigations/pending/INV-*.txt
+      hyp_pending:
+        glob: hypotheses/pending/HYP-*.txt
+    routes:
+      - to: research
+        when: discovery.inv_pending > 0
+      - to: argument
+        when: discovery.hyp_pending > 0
+      - to: report
+
+  - id: research
+    name: Demo research branch
+    type: map
+    over: investigations/pending/INV-*.txt
+    skills:
+      - demo-skill
+    task: research.md
+    routes:
+      - to: join_branches
+
+  - id: argument
+    name: Demo argument branch
+    type: map
+    over: hypotheses/pending/HYP-*.txt
+    skills:
+      - demo-skill
+    task: argument.md
+    routes:
+      - to: join_branches
+
+  - id: join_branches
+    name: Demo branch join
+    type: join
+    routes:
+      - to: report
+
+  - id: report
+    name: Demo report
+    skills:
+      - demo-skill
+    task: report.md

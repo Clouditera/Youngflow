@@ -69,9 +69,17 @@ const FlowStateAnnotation = Annotation.Root({
     reducer: (a, b) => ({ ...a, ...b }),
     default: () => ({}),
   }),
-  _route_decision: Annotation<string>({
+  _route_targets: Annotation<string[]>({
     reducer: (_a, b) => b,
-    default: () => "",
+    default: () => [],
+  }),
+  fork_context: Annotation<{ origin: string; expected: string[]; done: string[] } | undefined>({
+    reducer: (a, b) => {
+      if (b == null) return undefined;
+      if (!a || a.origin !== b.origin || a.expected.join("\0") !== b.expected.join("\0")) return b;
+      return { ...b, done: [...new Set([...(a.done ?? []), ...(b.done ?? [])])] };
+    },
+    default: () => undefined,
   }),
   _iterate_file: Annotation<string>({
     reducer: (_a, b) => b,
@@ -90,6 +98,13 @@ export interface FlowResult {
   extracted: Record<string, any>;
 }
 
+const DEFAULT_RECURSION_LIMIT = 100;
+
+interface RouteDecision {
+  targets: string[];
+  routeCounts: Record<string, number>;
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
@@ -103,6 +118,7 @@ export class Orchestrator {
   readonly checkpoint: Checkpoint;
   readonly runner: Runner;
   readonly workDir: string;
+  readonly recursionLimit: number;
   executor: Executor;
 
   private stageMap: Map<string, StageSpec>;
@@ -119,6 +135,7 @@ export class Orchestrator {
       resume?: boolean;
       maxParallel?: number;
       traceEvents?: boolean;
+      recursionLimit?: number;
     } = {},
   ) {
     this.spec = spec;
@@ -148,6 +165,7 @@ export class Orchestrator {
     });
 
     this.workDir = path.resolve(opts.workDir ?? ".");
+    this.recursionLimit = opts.recursionLimit ?? spec.recursionLimit ?? DEFAULT_RECURSION_LIMIT;
     this.executor = new Executor(
       this.runner,
       spec,
@@ -175,7 +193,8 @@ export class Orchestrator {
       extracted: {},
       stage_results: [],
       route_counts: {},
-      _route_decision: "",
+      _route_targets: [],
+      fork_context: undefined,
       _iterate_file: "",
       _stage_config: {},
     };
@@ -184,10 +203,11 @@ export class Orchestrator {
       const saved = this.checkpoint.loadState();
       initialState.extracted = saved.extracted ?? {};
       initialState.route_counts = saved.route_counts ?? {};
+      initialState.fork_context = saved.fork_context ?? undefined;
     }
 
     if (this.spec.timeout == null) {
-      const result = await graph.invoke(initialState);
+      const result = await graph.invoke(initialState, { recursionLimit: this.recursionLimit });
       return {
         stageResults: result.stage_results ?? [],
         extracted: result.extracted ?? {},
@@ -208,7 +228,7 @@ export class Orchestrator {
     );
     try {
       const result = await Promise.race([
-        graph.invoke(initialState),
+        graph.invoke(initialState, { recursionLimit: this.recursionLimit }),
         this.flowTimeoutPromise(this.spec.timeout),
       ]);
       return {
@@ -232,7 +252,9 @@ export class Orchestrator {
 
     // Phase 1: register nodes
     for (const stage of stages) {
-      if (stage.type === StageType.SINGLE) {
+      if (stage.type === StageType.JOIN) {
+        this.addJoin(builder, stage);
+      } else if (stage.type === StageType.SINGLE) {
         this.addSingle(builder, stage);
       } else {
         this.addFanout(builder, stage);
@@ -270,7 +292,7 @@ export class Orchestrator {
   }
 
   private exitNode(stage: StageSpec): string {
-    return stage.type !== StageType.SINGLE ? `${stage.id}_done` : stage.id;
+    return stage.type !== StageType.SINGLE && stage.type !== StageType.JOIN ? `${stage.id}_done` : stage.id;
   }
 
   private workerNode(stage: StageSpec): string {
@@ -278,12 +300,16 @@ export class Orchestrator {
   }
 
   private makeDispatcher() {
-    return (state: FlowState): string => {
-      const decision = state._route_decision ?? "";
-      if (decision && this.stageMap.has(decision)) {
-        return this.entryNode(this.stageMap.get(decision)!);
-      }
-      return END;
+    return (state: FlowState): string | Send[] => {
+      const targets = dedupe((state._route_targets ?? []).filter((t) => this.stageMap.has(t)));
+      if (targets.length === 0) return END;
+      if (targets.length === 1) return this.entryNode(this.stageMap.get(targets[0])!);
+      const forkContext = { origin: targets.join("+"), expected: targets, done: [] };
+      return targets.map((target) => new Send(this.entryNode(this.stageMap.get(target)!), {
+        ...state,
+        _route_targets: [],
+        fork_context: forkContext,
+      }));
     };
   }
 
@@ -304,10 +330,9 @@ export class Orchestrator {
             { id: stage.id, exit_code: 0, duration_ms: 0, skipped: true },
           ],
         };
+        Object.assign(updates, self.forkDoneUpdate(stage.id, state));
         if (stage.routes.length > 0) {
-          updates._route_decision = self.resumeRouteDecision(
-            stage, state.extracted ?? {},
-          );
+          updates._route_targets = self.resumeRouteDecision(stage, state.extracted ?? {});
         }
         return updates;
       }
@@ -334,16 +359,77 @@ export class Orchestrator {
         );
       }
 
+      Object.assign(updates, self.forkDoneUpdate(stage.id, state));
+
       if (stage.routes.length > 0) {
-        const [decision, counts] = self.evaluateRoutes(
+        const decision = self.evaluateRoutes(
           stage,
           updates.extracted,
           state.route_counts ?? {},
         );
-        updates.route_counts = counts;
-        updates._route_decision = decision;
+        updates.route_counts = decision.routeCounts;
+        updates._route_targets = decision.targets;
       }
 
+      return updates;
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Join stage (engine-only barrier)
+  // ------------------------------------------------------------------
+
+  private addJoin(builder: any, stage: StageSpec): void {
+    const self = this;
+
+    builder.addNode(stage.id, async (state: FlowState) => {
+      self.throwIfFlowTimedOut(stage.id);
+
+      const ctx = state.fork_context;
+      const expected = ctx?.expected ?? [];
+      const done = ctx?.done ?? [];
+      const waiting = expected.length > 0 && !expected.every((id) => done.includes(id));
+      if (waiting) {
+        debug("orchestrator", "info", "[%s] join waiting for branches: expected=%s done=%s",
+          stage.id, expected.join(","), done.join(","));
+        return { _route_targets: [] };
+      }
+
+      if (self.resume && self.checkpoint.isDone(stage.id)) {
+        logEvent({ category: "stage", event: "stage_skipped", stage: stage.id, reason: "resume" });
+        const updates: Record<string, any> = {
+          stage_results: [
+            { id: stage.id, exit_code: 0, duration_ms: 0, skipped: true },
+          ],
+          fork_context: undefined,
+        };
+        if (stage.routes.length > 0) {
+          updates._route_targets = self.resumeRouteDecision(stage, state.extracted ?? {});
+        }
+        return updates;
+      }
+
+      logEvent({ category: "stage", event: "stage_start", stage: stage.id });
+      const startedAt = new Date().toISOString().slice(0, 19);
+      const synthetic: StageResult = {
+        stageId: stage.id,
+        exitCode: 0,
+        durationMs: 0,
+        outputDir: self.workspace.root,
+      };
+      const updates: Record<string, any> = {
+        stage_results: [self.resultDict(synthetic, startedAt)],
+      };
+      updates.extracted = self.mergeStageState(stage, state, synthetic);
+      self.checkpoint.markDone(stage.id, updates.stage_results[0]);
+      self.refreshReport();
+
+      if (stage.routes.length > 0) {
+        const decision = self.evaluateRoutes(stage, updates.extracted, state.route_counts ?? {});
+        updates.route_counts = decision.routeCounts;
+        updates._route_targets = decision.targets;
+      }
+      updates.fork_context = undefined;
       return updates;
     });
   }
@@ -463,10 +549,9 @@ export class Orchestrator {
             { id: stage.id, exit_code: 0, duration_ms: 0, skipped: true },
           ],
         };
+        Object.assign(updates, self.forkDoneUpdate(stage.id, state));
         if (stage.routes.length > 0) {
-          updates._route_decision = self.resumeRouteDecision(
-            stage, state.extracted ?? {},
-          );
+          updates._route_targets = self.resumeRouteDecision(stage, state.extracted ?? {});
         }
         return updates;
       }
@@ -501,14 +586,16 @@ export class Orchestrator {
       });
       self.refreshReport();
 
+      Object.assign(updates, self.forkDoneUpdate(stage.id, state));
+
       if (stage.routes.length > 0) {
-        const [decision, counts] = self.evaluateRoutes(
+        const decision = self.evaluateRoutes(
           stage,
           updates.extracted,
           state.route_counts ?? {},
         );
-        updates.route_counts = counts;
-        updates._route_decision = decision;
+        updates.route_counts = decision.routeCounts;
+        updates._route_targets = decision.targets;
       }
 
       return updates;
@@ -572,7 +659,11 @@ export class Orchestrator {
     }
 
     const newExtracted = { ...(state.extracted ?? {}), [stage.id]: stageState };
-    this.checkpoint.saveState({ extracted: newExtracted });
+    this.checkpoint.saveState({
+      extracted: newExtracted,
+      route_counts: state.route_counts ?? {},
+      fork_context: state.fork_context,
+    });
     return newExtracted;
   }
 
@@ -580,31 +671,16 @@ export class Orchestrator {
     stage: StageSpec,
     extracted: Record<string, Record<string, any>>,
     routeCounts: Record<string, number>,
-  ): [string, Record<string, number>] {
-    const counts = { ...routeCounts };
-
-    for (const route of stage.routes) {
-      if (route.when && !evaluateRouteCondition(route.when, extracted)) {
-        continue;
-      }
-      if (route.maxLoops) {
-        const key = `${stage.id}→${route.to}`;
-        if ((counts[key] ?? 0) >= route.maxLoops) {
-          debug("orchestrator", "info", "[%s] route to '%s' exhausted (%s/%s)",
-            stage.id, route.to, counts[key], route.maxLoops);
-          continue;
-        }
-      }
-      // Route matched
-      const key = `${stage.id}→${route.to}`;
-      counts[key] = (counts[key] ?? 0) + 1;
-      logEvent({ category: "stage", event: "route", stage: stage.id, target: route.to });
-      this.checkpoint.saveState({ extracted, route_counts: counts });
-      return [route.to, counts];
+  ): RouteDecision {
+    const decision = evaluateRouteDecision(stage, extracted, routeCounts, true);
+    for (const target of decision.targets) {
+      logEvent({ category: "stage", event: "route", stage: stage.id, target });
     }
-
-    logEvent({ category: "stage", event: "route", stage: stage.id, target: null });
-    return ["", counts];
+    if (decision.targets.length === 0) {
+      logEvent({ category: "stage", event: "route", stage: stage.id, target: null });
+    }
+    this.checkpoint.saveState({ extracted, route_counts: decision.routeCounts });
+    return decision;
   }
 
   // ------------------------------------------------------------------
@@ -650,14 +726,27 @@ export class Orchestrator {
   private resumeRouteDecision(
     stage: StageSpec,
     extracted: Record<string, Record<string, any>>,
-  ): string {
-    for (const route of stage.routes) {
-      if (route.when && !evaluateRouteCondition(route.when, extracted)) continue;
-      logEvent({ category: "stage", event: "route", stage: stage.id, target: route.to });
-      return route.to;
+  ): string[] {
+    const decision = evaluateRouteDecision(stage, extracted, {}, false);
+    for (const target of decision.targets) {
+      logEvent({ category: "stage", event: "route", stage: stage.id, target });
     }
-    logEvent({ category: "stage", event: "route", stage: stage.id, target: null });
-    return "";
+    if (decision.targets.length === 0) {
+      logEvent({ category: "stage", event: "route", stage: stage.id, target: null });
+    }
+    return decision.targets;
+  }
+
+  private forkDoneUpdate(stageId: string, state: FlowState): Record<string, any> {
+    const ctx = state.fork_context;
+    if (!ctx?.expected?.includes(stageId)) return {};
+    const next = { ...ctx, done: dedupe([...(ctx.done ?? []), stageId]) };
+    this.checkpoint.saveState({
+      extracted: state.extracted ?? {},
+      route_counts: state.route_counts ?? {},
+      fork_context: next,
+    });
+    return { fork_context: next };
   }
 
   private refreshReport(): void {
@@ -682,6 +771,57 @@ export class Orchestrator {
 // ---------------------------------------------------------------------------
 // Route / task-when condition evaluation
 // ---------------------------------------------------------------------------
+
+export function evaluateRouteDecision(
+  stage: Pick<StageSpec, "id" | "routes">,
+  extracted: Record<string, Record<string, any>>,
+  routeCounts: Record<string, number>,
+  incrementCounts: boolean,
+): RouteDecision {
+  const counts = { ...routeCounts };
+  const selected: string[] = [];
+
+  const eligible = (route: { to: string; when: string | undefined; maxLoops: number | undefined }): boolean => {
+    if (route.maxLoops) {
+      const key = `${stage.id}→${route.to}`;
+      if ((counts[key] ?? 0) >= route.maxLoops) {
+        debug("orchestrator", "info", "[%s] route to '%s' exhausted (%s/%s)",
+          stage.id, route.to, counts[key], route.maxLoops);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  for (const route of stage.routes) {
+    if (!route.when) continue;
+    if (!evaluateRouteCondition(route.when, extracted)) continue;
+    if (!eligible(route)) continue;
+    if (incrementCounts) {
+      const key = `${stage.id}→${route.to}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    selected.push(route.to);
+  }
+
+  if (selected.length > 0) return { targets: dedupe(selected), routeCounts: counts };
+
+  for (const route of stage.routes) {
+    if (route.when) continue;
+    if (!eligible(route)) continue;
+    if (incrementCounts) {
+      const key = `${stage.id}→${route.to}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return { targets: [route.to], routeCounts: counts };
+  }
+
+  return { targets: [], routeCounts: counts };
+}
+
+function dedupe(values: string[]): string[] {
+  return [...new Set(values)];
+}
 
 function evaluateRouteCondition(
   expr: string,

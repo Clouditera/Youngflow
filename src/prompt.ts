@@ -26,6 +26,13 @@ export function render(
 ): string {
   const parts: string[] = [];
 
+  if (stage.task) {
+    const taskPath = path.join(tasksDir, stage.task);
+    if (existsSync(taskPath)) {
+      parts.push(readFileSync(taskPath, "utf-8").trim());
+    }
+  }
+
   if (stage.prompt) {
     const vars = buildVars(context);
     let rendered = stage.prompt.trim();
@@ -33,13 +40,6 @@ export function render(
       rendered = rendered.replaceAll(`\${${key}}`, String(value));
     }
     parts.push(rendered);
-  }
-
-  if (stage.task) {
-    const taskPath = path.join(tasksDir, stage.task);
-    if (existsSync(taskPath)) {
-      parts.push(readFileSync(taskPath, "utf-8").trim());
-    }
   }
 
   return parts.join("\n\n");

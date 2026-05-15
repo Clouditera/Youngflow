@@ -19,6 +19,7 @@ export enum StageType {
   SINGLE = "single",
   PARALLEL = "parallel",
   MAP = "map",
+  JOIN = "join",
 }
 
 export interface FlowInputSpec {
@@ -74,6 +75,7 @@ export interface FlowSpec {
   readonly sourcePath: string;
   readonly flowDir: string;
   readonly timeout: number | undefined;
+  readonly recursionLimit: number | undefined;
   readonly agentsDir: string;
   readonly skillsDir: string;
   readonly tasksDir: string;
@@ -150,6 +152,7 @@ export function parseFlow(
     sourcePath: yamlPath,
     flowDir,
     timeout: raw.timeout ?? undefined,
+    recursionLimit: raw.recursion_limit ?? undefined,
     agentsDir,
     skillsDir,
     tasksDir,

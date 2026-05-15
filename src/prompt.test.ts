@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { render, type PromptContext } from "./prompt.js";
 
 function makeStage(overrides: Record<string, any> = {}) {
@@ -61,6 +64,18 @@ describe("render", () => {
     const stage = makeStage({ prompt: "${work_dir}/a and ${work_dir}/b" });
     const result = render(stage, baseContext, "/flow/tasks");
     expect(result).toBe("/project/a and /project/b");
+  });
+
+  it("renders task content before rendered prompt", () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "youngflow-prompt-"));
+    try {
+      writeFileSync(path.join(tmpDir, "task.md"), "TASK BODY\n");
+      const stage = makeStage({ task: "task.md", prompt: "Context ${work_dir}" });
+      const result = render(stage, baseContext, tmpDir);
+      expect(result).toBe("TASK BODY\n\nContext /project");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("returns empty string for no prompt and no task", () => {

@@ -39,6 +39,63 @@ interface StageReport {
   children: StageReport[];
 }
 
+interface RunHistoryEntry {
+  id: string;
+  dir: string;
+  current: boolean;
+  started_at: string;
+  ended_at: string;
+  status: string;
+  mode: string;
+  duration_ms: number;
+  report_path?: string;
+  log_path?: string;
+  sessions_dir?: string;
+}
+
+function emptyRun(id: string, dir: string, current: boolean): RunHistoryEntry {
+  return { id, dir, current, started_at: "", ended_at: "", status: "unknown", mode: current ? "current" : "archived", duration_ms: 0 };
+}
+
+export function collectRunHistory(workspace: Workspace): RunHistoryEntry[] {
+  const entries: RunHistoryEntry[] = [];
+  entries.push(runEntry(workspace.engineDir, "Current run", true));
+
+  if (existsSync(workspace.runsDir)) {
+    const dirs = globSync("*", { cwd: workspace.runsDir, onlyDirectories: true }).sort().reverse();
+    for (const id of dirs) entries.push(runEntry(path.join(workspace.runsDir, id), id, false));
+  }
+  return entries;
+}
+
+function runEntry(dir: string, id: string, current: boolean): RunHistoryEntry {
+  const entry = emptyRun(id, dir, current);
+  const metaPath = path.join(dir, "run.yaml");
+  if (existsSync(metaPath)) {
+    try {
+      const meta = yaml.load(readFileSync(metaPath, "utf-8")) as Record<string, any>;
+      if (meta && typeof meta === "object") {
+        entry.id = current ? "Current run" : String(meta.run_id ?? id);
+        entry.started_at = String(meta.started_at ?? "");
+        entry.ended_at = String(meta.ended_at ?? "");
+        entry.status = String(meta.status ?? entry.status);
+        entry.mode = String(meta.mode ?? entry.mode);
+        entry.duration_ms = Number(meta.duration_ms ?? 0);
+      }
+    } catch {
+      // malformed metadata must not break report rendering
+    }
+  }
+  const reportPath = path.join(dir, "flow-report.html");
+  const logPath = path.join(dir, "youngflow.log");
+  const sessionsDir = path.join(dir, "sessions");
+  if (existsSync(reportPath)) entry.report_path = reportPath;
+  if (existsSync(logPath)) entry.log_path = logPath;
+  if (existsSync(sessionsDir)) entry.sessions_dir = sessionsDir;
+  return entry;
+}
+
+
 function emptyReport(id: string): StageReport {
   return {
     id,
@@ -232,7 +289,8 @@ export function refresh(
 ): string | undefined {
   try {
     const stages = collectStageReports(spec, workspace);
-    return renderHtml(stages, workspace.root, workspace.reportPath);
+    const history = collectRunHistory(workspace);
+    return renderHtml(stages, history, workspace.root, workspace.reportPath);
   } catch (e) {
     debug("report", "debug", "Report refresh failed: %s", e);
     return undefined;
@@ -372,8 +430,40 @@ function ganttBarHtml(
   return `<div class="gantt-bar" style="left:${leftPct.toFixed(2)}%;width:${widthPct.toFixed(2)}%;background:${color};${opacity}" title="${esc(entry.name)}: ${fmt(entry.duration_ms)}"></div>`;
 }
 
+function renderRunHistory(history: RunHistoryEntry[], reportPath: string): string {
+  const base = path.dirname(reportPath);
+  const rows = history.map((r) => {
+    const cls = r.current ? ' class="current"' : "";
+    const reportLink = r.current
+      ? `<span class="disabled-link">Current report</span>`
+      : r.report_path
+        ? `<a href="${esc(rel(r.report_path, base))}" aria-label="Open report for ${esc(r.id)}">Report</a>`
+        : `<span class="disabled-link">Report unavailable</span>`;
+    const logLink = r.log_path ? `<a href="${esc(rel(r.log_path, base))}" aria-label="Open log for ${esc(r.id)}">Log</a>` : "";
+    const sessionsLink = r.sessions_dir ? `<a href="${esc(rel(r.sessions_dir, base))}" aria-label="Open sessions for ${esc(r.id)}">Sessions</a>` : "";
+    const actions = [reportLink, logLink, sessionsLink].filter(Boolean).join(" ");
+    return `<tr${cls}><td>${esc(r.current ? "Current" : r.id)}</td><td class="timestamp">${esc(fmtDate(r.started_at || r.id))}</td><td>${esc(r.mode)}</td><td>${statusPill(r.status)}</td><td class="num">${fmt(r.duration_ms)}</td><td><span class="run-actions">${actions}</span></td></tr>`;
+  }).join("");
+  return `<section class="section-card run-history"><div class="section-header"><h2 class="section-title">Run History</h2><span class="section-hint">Current run plus archived .youngflow/runs entries</span></div><table class="run-ledger"><thead><tr><th scope="col">Run</th><th scope="col">Started</th><th scope="col">Mode</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Open</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
+function statusPill(status: string): string {
+  const safe = status || "unknown";
+  const cls = safe === "success" ? "status-success" : safe === "failed" ? "status-failed" : safe === "running" || safe === "pending" ? "status-running" : "status-warning";
+  return `<span class="status-pill ${cls}">${esc(safe)}</span>`;
+}
+
+function fmtDate(value: string): string {
+  if (!value) return "—";
+  const m = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} UTC`;
+  const d = parseDt(value);
+  return d ? d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC") : value;
+}
+
 function renderHtml(
   stages: StageReport[],
+  history: RunHistoryEntry[],
   root: string,
   reportPath: string,
 ): string {
@@ -387,6 +477,8 @@ function renderHtml(
   const totalCacheWrite = stages.reduce((s, st) => s + st.tokens_cache_write, 0);
   const totalTokens = stages.reduce((s, st) => s + st.tokens_total, 0);
   const completed = stages.filter((s) => s.status === "success").length;
+  const failures = stages.filter((s) => s.status === "failed").length;
+  const apiErrors = stages.reduce((s, st) => s + st.api_errors, 0);
 
   // Graph
   const graphNodes: string[] = [];
@@ -441,6 +533,8 @@ function renderHtml(
     }
 
     let children = "";
+    const hasFailedChild = s.children.some((c) => c.status === "failed");
+    const stageFailed = s.status === "failed" || hasFailedChild;
     if (s.children.length > 0) {
       const rows = s.children.map((c) => {
         const [ci] = STATUS[c.status] ?? ["⏳"];
@@ -449,77 +543,39 @@ function renderHtml(
           sessionLinks = c.session_htmls
             .map(
               (h, i) =>
-                `<a class="session-link" href="${esc(rel(h, path.dirname(reportPath)))}">\uD83D\uDCCB${i + 1}</a>`,
+                `<a class="session-link" href="${esc(rel(h, path.dirname(reportPath)))}">Session ${i + 1}</a>`,
             )
             .join(" ");
-          sessionLinks = `<span>${sessionLinks}</span>`;
         } else if (c.session_html) {
-          sessionLinks = `<a class="session-link" href="${esc(rel(c.session_html, path.dirname(reportPath)))}">\uD83D\uDCCB</a>`;
+          sessionLinks = `<a class="session-link" href="${esc(rel(c.session_html, path.dirname(reportPath)))}">Session</a>`;
         }
-        let childStats = `<span class="child-stat">${fmt(c.duration_ms)}</span><span class="child-stat">${c.tools} tools</span>`;
-        if (c.tokens_in || c.tokens_out) {
-          childStats += `<span class="child-stat">${c.tokens_in.toLocaleString()} in</span><span class="child-stat">${c.tokens_out.toLocaleString()} out</span>`;
-        }
-        return `<div class="child"><span>${ci}</span><span class="child-name">${esc(c.name)}</span>${childStats}${sessionLinks}</div>`;
+        return `<tr class="worker-row ${c.status === "failed" ? "worker-failed" : ""}"><td>${ci} ${esc(c.status)}</td><td>${esc(c.name)}</td><td class="num">${fmt(c.duration_ms)}</td><td class="num">${c.tools}</td><td class="num">${c.tokens_total.toLocaleString()}</td><td>${sessionLinks}</td></tr>`;
       });
-      children = `<div class="children">${rows.join("")}</div>`;
+      const openAttr = hasFailedChild ? " open" : "";
+      children = `<details class="worker-details"${openAttr}><summary>Workers (${s.children.length}${hasFailedChild ? ", failures" : ""})</summary><table class="worker-table"><thead><tr><th scope="col">Status</th><th scope="col">Worker</th><th scope="col">Duration</th><th scope="col">Tools</th><th scope="col">Tokens</th><th scope="col">Sessions</th></tr></thead><tbody>${rows.join("")}</tbody></table></details>`;
     }
 
-    return `<div class="stage-card"><div class="stage-header"><span class="stage-title">${icon} ${esc(s.name)}</span><span class="stage-badge">${s.type}</span></div>${stats}${session}${children}</div>`;
+    return `<div class="stage-card ${stageFailed ? "stage-failed" : ""}"><div class="stage-header"><span class="stage-title">${icon} ${esc(s.name)}</span><span class="stage-badge">${s.type}</span></div>${stageFailed ? `<div class="failure-note">This stage failed. Open log for details.</div>` : ""}${stats}${session}${children}</div>`;
   });
 
   const content = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>YoungFlow Report</title>
 <style>
+:root{--yf-bg:#09090B;--yf-surface-1:#111114;--yf-surface-2:#17171C;--yf-surface-3:#1D1D24;--yf-border-subtle:rgba(255,255,255,.06);--yf-border:rgba(255,255,255,.10);--yf-border-strong:rgba(255,255,255,.18);--yf-text:#F4F4F5;--yf-text-secondary:#D4D4D8;--yf-text-muted:#A1A1AA;--yf-text-faint:#71717A;--yf-accent:#38BDF8;--yf-accent-soft:rgba(56,189,248,.12);--yf-success:#22C55E;--yf-success-soft:rgba(34,197,94,.12);--yf-danger:#F87171;--yf-danger-soft:rgba(248,113,113,.12);--yf-warning:#F59E0B;--yf-warning-soft:rgba(245,158,11,.12);--yf-pending:#A1A1AA;--yf-pending-soft:rgba(161,161,170,.12);--yf-radius-sm:6px;--yf-radius-md:10px;--yf-radius-lg:14px}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e5e5e5;padding:24px}
-h1{font-size:24px;margin-bottom:8px}
-.summary{color:#a3a3a3;margin-bottom:24px;font-size:14px}
-.summary span{color:#e5e5e5;font-weight:600}
-.graph{display:flex;align-items:center;gap:8px;margin-bottom:32px;overflow-x:auto;padding:16px 0}
-.graph-node{padding:8px 16px;border-radius:8px;font-size:13px;white-space:nowrap;border:1px solid #333}
-.graph-arrow{color:#555;font-size:18px}
-.graph-parallel{display:flex;flex-direction:column;gap:4px;border:1px dashed #333;border-radius:8px;padding:8px}
-.stage-card{background:#171717;border:1px solid #262626;border-radius:12px;padding:20px;margin-bottom:16px}
-.stage-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.stage-title{font-size:16px;font-weight:600}
-.stage-badge{font-size:11px;padding:2px 8px;border-radius:4px;background:#262626;color:#a3a3a3}
-.stage-stats{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:#a3a3a3}
-.stage-stats .value{color:#e5e5e5;font-weight:500}
-.session-link{display:inline-block;margin-top:8px;color:#60a5fa;text-decoration:none;font-size:13px}
-.session-link:hover{text-decoration:underline}
-.children{margin-top:12px;padding-left:16px;border-left:2px solid #262626}
-.child{padding:8px 0;font-size:13px;display:flex;gap:16px;align-items:center}
-.child-name{min-width:200px}
-.child-stat{color:#a3a3a3}
-.gantt{margin-bottom:32px;background:#171717;border:1px solid #262626;border-radius:12px;padding:20px}
-.gantt-axis{position:relative;height:20px;margin-bottom:8px;margin-left:160px}
-.gantt-tick{position:absolute;font-size:11px;color:#555;transform:translateX(-50%)}
-.gantt-row{display:flex;align-items:center;height:28px}
-.gantt-label{width:160px;font-size:12px;color:#a3a3a3;text-align:right;padding-right:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
-.gantt-label-parent{cursor:pointer;color:#e5e5e5}
-.gantt-label-child{font-size:11px;color:#666;padding-left:16px}
-.gantt-group>summary{list-style:none}
-.gantt-group>summary::-webkit-details-marker{display:none}
-.gantt-group>summary .gantt-label-parent::before{content:'▶ ';font-size:9px;color:#555}
-.gantt-group[open]>summary .gantt-label-parent::before{content:'▼ ';font-size:9px;color:#555}
-.gantt-track{flex:1;position:relative;height:18px;background:#0a0a0a;border-radius:4px}
-.gantt-bar{position:absolute;height:100%;border-radius:4px;min-width:3px;opacity:0.85}
-.gantt-bar:hover{opacity:1}
-</style></head><body>
-<h1>🔍 YoungFlow Report</h1>
-<div class="summary">
-<span>${completed}/${stages.length}</span> stages |
-<span>${fmt(totalDur)}</span> total |
-<span>${totalTools}</span> tools |
-<span>${totalIn.toLocaleString()}</span> in |
-<span>${totalOut.toLocaleString()}</span> out
-</div>
-<div class="graph">${graphNodes.join("")}</div>
-${renderGantt(stages)}
-${cards.join("")}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--yf-bg);color:var(--yf-text);font-size:13px;line-height:1.5;padding:24px}.report-shell{max-width:1440px;margin:0 auto}a{color:var(--yf-accent);text-decoration:none}a:hover{text-decoration:underline}a:focus-visible,summary:focus-visible{outline:2px solid var(--yf-accent);outline-offset:2px;border-radius:var(--yf-radius-sm)}.num,.metric-value{font-variant-numeric:tabular-nums}.timestamp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+h1{font-size:22px;line-height:28px;font-weight:650}.report-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:20px}.report-subtitle{color:var(--yf-text-muted);margin-top:4px}.generated{color:var(--yf-text-muted);font-size:12px;text-align:right}.summary-panel,.section-card{background:var(--yf-surface-1);border:1px solid var(--yf-border);border-radius:var(--yf-radius-lg);margin-bottom:16px}.summary-panel{padding:16px}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.metric-label{color:var(--yf-text-muted);font-size:12px}.metric-value{color:var(--yf-text);font-size:15px;font-weight:650}.section-card{overflow:hidden}.section-header{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:14px 16px;border-bottom:1px solid var(--yf-border-subtle)}.section-title{font-size:15px;line-height:22px;font-weight:650}.section-hint{color:var(--yf-text-muted);font-size:12px}.run-ledger{width:100%;border-collapse:collapse}.run-ledger th,.run-ledger td{padding:10px 12px;border-bottom:1px solid var(--yf-border-subtle);text-align:left;vertical-align:middle}.run-ledger th{color:var(--yf-text-muted);font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.02em}.run-ledger td{color:var(--yf-text-secondary)}.run-ledger tr.current{background:rgba(56,189,248,.06)}.run-actions{display:inline-flex;flex-wrap:wrap;gap:8px}.disabled-link{color:var(--yf-text-faint)}.status-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid currentColor}.status-success{color:var(--yf-success);background:var(--yf-success-soft)}.status-failed{color:var(--yf-danger);background:var(--yf-danger-soft)}.status-running,.status-pending{color:var(--yf-pending);background:var(--yf-pending-soft)}.status-warning{color:var(--yf-warning);background:var(--yf-warning-soft)}
+.graph{display:flex;align-items:center;gap:8px;overflow-x:auto;padding:14px 16px}.graph-node{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--yf-border);background:var(--yf-surface-2);white-space:nowrap}.graph-arrow{color:var(--yf-text-faint)}.graph-parallel{display:flex;flex-direction:column;gap:4px;border:1px dashed var(--yf-border);border-radius:8px;padding:8px}.stage-card{background:var(--yf-surface-1);border:1px solid var(--yf-border);border-radius:12px;padding:20px;margin-bottom:16px}.stage-failed{border-color:var(--yf-danger);background:linear-gradient(0deg,var(--yf-danger-soft),transparent 45%),var(--yf-surface-1)}.failure-note{color:var(--yf-danger);margin-bottom:10px}.stage-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.stage-title{font-size:14px;font-weight:600}.stage-badge{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--yf-surface-3);color:var(--yf-text-muted)}.stage-stats{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--yf-text-muted)}.stage-stats .value{color:var(--yf-text);font-weight:500}.session-link{display:inline-block;margin-top:8px;color:var(--yf-accent);text-decoration:none;font-size:13px;border:1px solid var(--yf-border);border-radius:999px;padding:2px 8px}.worker-details{margin-top:12px;border:1px solid var(--yf-border-subtle);border-radius:var(--yf-radius-md);overflow:hidden}.worker-details>summary{cursor:pointer;padding:10px 12px;color:var(--yf-text-secondary);background:var(--yf-surface-2)}.worker-table{width:100%;border-collapse:collapse}.worker-table th,.worker-table td{padding:8px 10px;border-top:1px solid var(--yf-border-subtle);text-align:left}.worker-table th{color:var(--yf-text-muted);font-size:11px;text-transform:uppercase}.worker-failed{background:var(--yf-danger-soft)}.gantt{padding:20px}.gantt-axis{position:relative;height:20px;margin-bottom:8px;margin-left:160px}.gantt-tick{position:absolute;font-size:11px;color:var(--yf-text-faint);transform:translateX(-50%)}.gantt-row{display:flex;align-items:center;height:28px}.gantt-label{width:160px;font-size:12px;color:var(--yf-text-muted);text-align:right;padding-right:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}.gantt-label-parent{cursor:pointer;color:var(--yf-text)}.gantt-label-child{font-size:11px;color:var(--yf-text-faint);padding-left:16px}.gantt-group>summary{list-style:none}.gantt-group>summary::-webkit-details-marker{display:none}.gantt-group>summary .gantt-label-parent::before{content:'▶ ';font-size:9px;color:var(--yf-text-faint)}.gantt-group[open]>summary .gantt-label-parent::before{content:'▼ ';font-size:9px;color:var(--yf-text-faint)}.gantt-track{flex:1;position:relative;height:18px;background:var(--yf-bg);border-radius:4px}.gantt-bar{position:absolute;height:100%;border-radius:4px;min-width:3px;opacity:.85}.gantt-bar:hover{opacity:1}
+</style></head><body><div class="report-shell">
+<header class="report-header"><div><h1>YoungFlow Report</h1><div class="report-subtitle">Output: ${esc(root)}</div></div><div class="generated">Generated ${esc(fmtDate(new Date().toISOString()))}</div></header>
+<section class="summary-panel" aria-labelledby="current-run-title"><div class="section-header"><h2 id="current-run-title" class="section-title">Current Run</h2></div><div class="summary-grid"><div><div class="metric-label">Completion</div><div class="metric-value">${completed}/${stages.length} stages</div></div><div><div class="metric-label">Duration</div><div class="metric-value">${fmt(totalDur)}</div></div><div><div class="metric-label">Tools</div><div class="metric-value">${totalTools}</div></div><div><div class="metric-label">Tokens total</div><div class="metric-value">${totalTokens.toLocaleString()}</div></div><div><div class="metric-label">Failures</div><div class="metric-value">${failures}</div></div><div><div class="metric-label">API errors</div><div class="metric-value">${apiErrors}</div></div></div></section>
+${renderRunHistory(history, reportPath)}
+<section class="section-card"><div class="section-header"><h2 class="section-title">Flow Graph</h2></div><div class="graph">${graphNodes.join("")}</div></section>
+<section class="section-card"><div class="section-header"><h2 class="section-title">Timeline</h2><span class="section-hint">Durations show observed wall time when start times are available.</span></div>${renderGantt(stages)}</section>
+<section><div class="section-header"><h2 class="section-title">Stage Details</h2></div>
+${cards.join("")}</section>
 <div style="color:#555;font-size:12px;margin-top:32px">Output: ${esc(root)}</div>
-</body></html>`;
+</div></body></html>`;
 
   writeFileSync(reportPath, content, "utf-8");
   logEvent({ category: "engine", event: "report_refresh", path: reportPath });
