@@ -112,4 +112,38 @@ describe("resolveModelConfig", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("writes contextWindow from LLM_CONTEXT_WINDOW_TOKENS", () => {
+    const dir = tmpDir("context-window");
+    try {
+      const config = resolveModelConfig({
+        MODEL_PROTO_TYPE: "openai",
+        LLM_MODEL_NAME: "qwen3-coder",
+        LLM_BASE_URL: "https://proxy.example/v1",
+        LLM_CONTEXT_WINDOW_TOKENS: "256000",
+      }, "anthropic/claude", dir);
+
+      const models = readModelsJson(config.agentDir!);
+      expect(models.providers.youngflow.models[0].contextWindow).toBe(256000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to 128000 for invalid context window env", () => {
+    const dir = tmpDir("context-window-invalid");
+    try {
+      const config = resolveModelConfig({
+        MODEL_PROTO_TYPE: "openai",
+        LLM_MODEL_NAME: "qwen3-coder",
+        LLM_BASE_URL: "https://proxy.example/v1",
+        LLM_CONTEXT_WINDOW_TOKENS: "invalid",
+      }, "anthropic/claude", dir);
+
+      const models = readModelsJson(config.agentDir!);
+      expect(models.providers.youngflow.models[0].contextWindow).toBe(128000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

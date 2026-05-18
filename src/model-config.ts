@@ -19,6 +19,7 @@ import { debug } from "./logger.js";
 
 const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
 const CUSTOM_PROVIDER = "youngflow";
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000;
 
 const DEEPSEEK_REASONING_EFFORT_MAP = {
   minimal: "high",
@@ -65,6 +66,7 @@ export function resolveModelConfig(
   const baseUrl = (env.LLM_BASE_URL ?? "").trim();
   const apiKey = (env.LLM_API_KEY ?? "").trim();
   const effort = (env.MODEL_EFFORT ?? "").trim();
+  const contextWindowTokens = parseContextWindowTokens(env.LLM_CONTEXT_WINDOW_TOKENS);
 
   if (!proto && !modelName && !apiKey) {
     debug("model_config", "info", "No model config in .env — using default: %s", defaultModel);
@@ -95,6 +97,7 @@ export function resolveModelConfig(
       provider,
       isCustom,
       isDeepSeekCustom,
+      contextWindowTokens,
       base: agentDirBase,
       agentsDir,
     });
@@ -112,6 +115,12 @@ export function resolveModelConfig(
     agentDir,
     envVars,
   };
+}
+
+function parseContextWindowTokens(raw: string | undefined): number {
+  const value = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(value) || value < 1000 || value > 10000000) return DEFAULT_CONTEXT_WINDOW_TOKENS;
+  return value;
 }
 
 function isDeepSeekLike(modelName: string, baseUrl: string): boolean {
@@ -134,6 +143,7 @@ function createAgentDir(opts: {
   provider: string;
   isCustom: boolean;
   isDeepSeekCustom: boolean;
+  contextWindowTokens: number;
   base?: string;
   agentsDir?: string;
 }): string {
@@ -168,7 +178,7 @@ function createAgentDir(opts: {
         {
           id: opts.modelName,
           input: ["text"],
-          contextWindow: 200000,
+          contextWindow: opts.contextWindowTokens,
           maxTokens: 16384,
           ...(opts.isDeepSeekCustom ? {
             reasoning: true,
