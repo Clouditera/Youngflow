@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6 - 2026-06-03
+
+### Fixed
+- Fixed ZAI/GLM reasoning model detection for `glm-*` models and `bigmodel.cn` / `zhipuai` OpenAI-compatible endpoints.
+- YoungFlow now sets provider `zai` plus `reasoning: true` for detected ZAI/GLM custom endpoints, letting pi infer compat and handle `enable_thinking` / `reasoning_content`.
+- Simplified DeepSeek and ZAI custom model config generation to avoid duplicating pi compat rules; YoungFlow now writes only the provider name and `reasoning: true` for detected reasoning providers.
+
 ## 0.2.5 - 2026-05-14
 
 ### Added
