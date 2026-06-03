@@ -21,21 +21,8 @@ const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
 const CUSTOM_PROVIDER = "youngflow";
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000;
 
-const DEEPSEEK_REASONING_EFFORT_MAP = {
-  minimal: "high",
-  low: "high",
-  medium: "high",
-  high: "high",
-  xhigh: "max",
-};
-
-const ZAI_REASONING_EFFORT_MAP = {
-  minimal: "low",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "high",
-};
+// Reasoning effort maps removed — pi auto-detects compat from provider name.
+// YoungFlow only needs to set provider + reasoning: true.
 
 const API_TYPE_MAP: Record<string, string> = {
   openai: "openai-completions",
@@ -203,21 +190,8 @@ function createAgentDir(opts: {
           input: ["text"],
           contextWindow: opts.contextWindowTokens,
           maxTokens: 16384,
-          ...(opts.isDeepSeekCustom ? {
+          ...((opts.isDeepSeekCustom || opts.isZaiCustom) ? {
             reasoning: true,
-            compat: {
-              supportsDeveloperRole: false,
-              requiresReasoningContentOnAssistantMessages: true,
-              thinkingFormat: "deepseek",
-              reasoningEffortMap: DEEPSEEK_REASONING_EFFORT_MAP,
-            },
-          } : opts.isZaiCustom ? {
-            reasoning: true,
-            compat: {
-              supportsDeveloperRole: false,
-              thinkingFormat: "zai",
-              reasoningEffortMap: ZAI_REASONING_EFFORT_MAP,
-            },
           } : {}),
         },
       ],

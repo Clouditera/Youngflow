@@ -37,18 +37,8 @@ describe("resolveModelConfig", () => {
       const model = provider.models[0];
       expect(model.id).toBe("deepseek-v4-pro");
       expect(model.reasoning).toBe(true);
-      expect(model.compat).toEqual({
-        supportsDeveloperRole: false,
-        requiresReasoningContentOnAssistantMessages: true,
-        thinkingFormat: "deepseek",
-        reasoningEffortMap: {
-          minimal: "high",
-          low: "high",
-          medium: "high",
-          high: "high",
-          xhigh: "max",
-        },
-      });
+      // compat is intentionally omitted — pi auto-detects from provider name
+      expect(model.compat).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -170,9 +160,8 @@ describe("resolveModelConfig", () => {
       const model = provider.models[0];
       expect(model.id).toBe("glm-5.1");
       expect(model.reasoning).toBe(true);
-      expect(model.compat.thinkingFormat).toBe("zai");
-      expect(model.compat.supportsDeveloperRole).toBe(false);
-      expect(model.compat.reasoningEffortMap).toBeDefined();
+      // compat is intentionally omitted — pi auto-detects from provider name "zai"
+      expect(model.compat).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -192,7 +181,8 @@ describe("resolveModelConfig", () => {
       const models = readModelsJson(config.agentDir!);
       expect(models.providers.zai).toBeDefined();
       expect(models.providers.zai.models[0].reasoning).toBe(true);
-      expect(models.providers.zai.models[0].compat.thinkingFormat).toBe("zai");
+      // compat omitted — pi detects from provider name
+      expect(models.providers.zai.models[0].compat).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -210,7 +200,8 @@ describe("resolveModelConfig", () => {
       // GLM model name matches isZaiLike even on generic URL
       expect(config.modelString).toBe("zai/glm-5.1");
       const models = readModelsJson(config.agentDir!);
-      expect(models.providers.zai.models[0].compat.thinkingFormat).toBe("zai");
+      expect(models.providers.zai.models[0].reasoning).toBe(true);
+      expect(models.providers.zai.models[0].compat).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
