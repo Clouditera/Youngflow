@@ -29,6 +29,14 @@ const DEEPSEEK_REASONING_EFFORT_MAP = {
   xhigh: "max",
 };
 
+const ZAI_REASONING_EFFORT_MAP = {
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+};
+
 const API_TYPE_MAP: Record<string, string> = {
   openai: "openai-completions",
   anthropic: "anthropic",
@@ -80,7 +88,8 @@ export function resolveModelConfig(
 
   const isCustom = !!baseUrl;
   const isDeepSeekCustom = isCustom && isDeepSeekLike(modelName, baseUrl);
-  const provider = isCustom ? (isDeepSeekCustom ? "deepseek" : CUSTOM_PROVIDER) : proto;
+  const isZaiCustom = isCustom && !isDeepSeekCustom && isZaiLike(modelName, baseUrl);
+  const provider = isCustom ? (isDeepSeekCustom ? "deepseek" : isZaiCustom ? "zai" : CUSTOM_PROVIDER) : proto;
   const modelString = `${provider}/${modelName}`;
   const thinkingLevel = effort || undefined;
 
@@ -97,6 +106,7 @@ export function resolveModelConfig(
       provider,
       isCustom,
       isDeepSeekCustom,
+      isZaiCustom,
       contextWindowTokens,
       base: agentDirBase,
       agentsDir,
@@ -135,6 +145,18 @@ function isDeepSeekLike(modelName: string, baseUrl: string): boolean {
   );
 }
 
+function isZaiLike(modelName: string, baseUrl: string): boolean {
+  const model = modelName.toLowerCase();
+  const url = baseUrl.toLowerCase();
+  return (
+    model.startsWith("glm-") ||
+    model.startsWith("glm4") ||
+    model.startsWith("glm5") ||
+    url.includes("bigmodel.cn") ||
+    url.includes("zhipuai")
+  );
+}
+
 function createAgentDir(opts: {
   proto: string;
   modelName: string;
@@ -143,6 +165,7 @@ function createAgentDir(opts: {
   provider: string;
   isCustom: boolean;
   isDeepSeekCustom: boolean;
+  isZaiCustom: boolean;
   contextWindowTokens: number;
   base?: string;
   agentsDir?: string;
@@ -187,6 +210,13 @@ function createAgentDir(opts: {
               requiresReasoningContentOnAssistantMessages: true,
               thinkingFormat: "deepseek",
               reasoningEffortMap: DEEPSEEK_REASONING_EFFORT_MAP,
+            },
+          } : opts.isZaiCustom ? {
+            reasoning: true,
+            compat: {
+              supportsDeveloperRole: false,
+              thinkingFormat: "zai",
+              reasoningEffortMap: ZAI_REASONING_EFFORT_MAP,
             },
           } : {}),
         },

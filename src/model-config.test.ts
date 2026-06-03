@@ -146,4 +146,73 @@ describe("resolveModelConfig", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("detects ZAI/GLM custom endpoint via model name and writes zai compat", () => {
+    const dir = tmpDir("zai-glm");
+    try {
+      const config = resolveModelConfig({
+        MODEL_PROTO_TYPE: "openai",
+        LLM_MODEL_NAME: "glm-5.1",
+        LLM_BASE_URL: "https://open.bigmodel.cn/api/coding/paas/v4",
+        LLM_API_KEY: "secret",
+        MODEL_EFFORT: "medium",
+      }, "anthropic/claude", dir);
+
+      expect(config.modelString).toBe("zai/glm-5.1");
+      expect(config.thinkingLevel).toBe("medium");
+      expect(config.agentDir).toBe(path.join(dir, ".pi-agent"));
+
+      const models = readModelsJson(config.agentDir!);
+      const provider = models.providers.zai;
+      expect(provider).toBeDefined();
+      expect(provider.baseUrl).toBe("https://open.bigmodel.cn/api/coding/paas/v4");
+      expect(provider.api).toBe("openai-completions");
+      const model = provider.models[0];
+      expect(model.id).toBe("glm-5.1");
+      expect(model.reasoning).toBe(true);
+      expect(model.compat.thinkingFormat).toBe("zai");
+      expect(model.compat.supportsDeveloperRole).toBe(false);
+      expect(model.compat.reasoningEffortMap).toBeDefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects ZAI from bigmodel.cn URL even with non-glm model name", () => {
+    const dir = tmpDir("zai-url");
+    try {
+      const config = resolveModelConfig({
+        MODEL_PROTO_TYPE: "openai",
+        LLM_MODEL_NAME: "custom-model",
+        LLM_BASE_URL: "https://open.bigmodel.cn/api/v4",
+        LLM_API_KEY: "secret",
+      }, "anthropic/claude", dir);
+
+      expect(config.modelString).toBe("zai/custom-model");
+      const models = readModelsJson(config.agentDir!);
+      expect(models.providers.zai).toBeDefined();
+      expect(models.providers.zai.models[0].reasoning).toBe(true);
+      expect(models.providers.zai.models[0].compat.thinkingFormat).toBe("zai");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat GLM model on non-ZAI URL as ZAI", () => {
+    const dir = tmpDir("glm-non-zai");
+    try {
+      const config = resolveModelConfig({
+        MODEL_PROTO_TYPE: "openai",
+        LLM_MODEL_NAME: "glm-5.1",
+        LLM_BASE_URL: "https://generic-proxy.example/v1",
+      }, "anthropic/claude", dir);
+
+      // GLM model name matches isZaiLike even on generic URL
+      expect(config.modelString).toBe("zai/glm-5.1");
+      const models = readModelsJson(config.agentDir!);
+      expect(models.providers.zai.models[0].compat.thinkingFormat).toBe("zai");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
