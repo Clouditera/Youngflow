@@ -7,9 +7,20 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import Ajv from "ajv";
 import { debug } from "./logger.js";
+
+declare const __dirname: string;
+
+function specDir(): string {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return __dirname;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types (all readonly)
@@ -310,10 +321,7 @@ export function validateFlow(raw: Record<string, any>, flowDir: string): void {
 }
 
 function validateSchema(raw: Record<string, any>, errors: string[]): void {
-  const schemaPath = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    "flow.schema.yaml",
-  );
+  const schemaPath = path.join(specDir(), "flow.schema.yaml");
   if (!existsSync(schemaPath)) {
     debug("spec", "warning", "Schema file not found: %s", schemaPath);
     return;

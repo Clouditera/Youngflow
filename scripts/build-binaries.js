@@ -5,6 +5,7 @@ import path from "node:path";
 
 const root = process.cwd();
 const releaseDir = path.join(root, "release");
+const pkgTarget = path.join(root, "bundle");
 const pkgBin = path.join(root, "node_modules", "@yao-pkg", "pkg", "lib-es5", "bin.js");
 const defaultTargets = [
   "node20-linux-x64",
@@ -25,7 +26,7 @@ for (const target of targets) {
   const output = path.join(releaseDir, binaryNameForTarget(target));
   execFileSync(
     process.execPath,
-    [pkgBin, ".", "--targets", target, "--output", output],
+    [pkgBin, pkgTarget, "--targets", target, "--output", output],
     { stdio: "inherit" },
   );
 }

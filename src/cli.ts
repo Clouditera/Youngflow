@@ -17,17 +17,30 @@ import { Workspace } from "./workspace.js";
 import * as report from "./report.js";
 import { setLevel, attachFileHandler, enableJsonLog, logEvent, logFlowMessage, LogLevel } from "./logger.js";
 
+declare const __dirname: string;
 
+function currentDir(): string {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return __dirname;
+  }
+}
 
 function loadVersion(): string {
-  try {
-    const thisDir = path.dirname(fileURLToPath(import.meta.url));
-    const pkgPath = path.resolve(thisDir, "..", "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
+  const thisDir = currentDir();
+  for (const pkgPath of [
+    path.resolve(thisDir, "..", "package.json"),
+    path.resolve(thisDir, "package.json"),
+  ]) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      return pkg.version ?? "0.0.0";
+    } catch {
+      // try next location
+    }
   }
+  return "0.0.0";
 }
 
 const VERSION = loadVersion();

@@ -1,6 +1,7 @@
 # Node
 node_modules/
 dist/
+bundle/
 release/
 *.tgz
 

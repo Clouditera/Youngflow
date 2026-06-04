@@ -1,6 +1,6 @@
 {
   "name": "youngflow",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Generic AI flow runner \u2014 LangGraph orchestration + pi CLI execution",
   "type": "module",
   "main": "dist/index.js",
@@ -14,7 +14,8 @@
     "start": "node bin/youngflow.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:binary": "npm run build && node scripts/build-binaries.js"
+    "bundle": "node scripts/bundle.js",
+    "build:binary": "npm run build && npm run bundle && node scripts/build-binaries.js"
   },
   "dependencies": {
     "@langchain/langgraph": "^0.2",
@@ -27,12 +28,13 @@
     "@types/js-yaml": "^4.0",
     "@types/node": "^22.0",
     "@yao-pkg/pkg": "^6.19.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.7",
     "vitest": "^4.1.4"
   },
   "pkg": {
     "assets": [
-      "dist/flow.schema.yaml",
+      "flow.schema.yaml",
       "package.json"
     ],
     "targets": [

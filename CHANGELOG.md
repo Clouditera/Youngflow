@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8 - 2026-06-04
+
+### Changed
+- Optimized the binary build pipeline with esbuild tree-shaking before pkg packaging.
+- Reduced release binary size significantly (linux ~99MB to ~57MB) with no runtime behavior changes.
+
 ## 0.2.7 - 2026-06-04
 
 ### Added
