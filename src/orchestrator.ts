@@ -573,7 +573,7 @@ export class Orchestrator {
       let result: StageResult;
       if (stage.type === StageType.PARALLEL) {
         const task = stage.tasks[stageConfig.task_index];
-        const outputDir = self.workspace.ensureDir(task.outputSubdir);
+        const outputDir = path.join(self.workspace.root, task.outputSubdir);
         await sem.acquire();
         try {
           result = await self.executor.execute(task, {
@@ -585,7 +585,7 @@ export class Orchestrator {
           sem.release();
         }
       } else {
-        const outputDir = self.workspace.ensureDir(stage.id, label);
+        const outputDir = path.join(self.workspace.root, stage.id, label);
         await sem.acquire();
         try {
           result = await self.executor.execute(stage, {

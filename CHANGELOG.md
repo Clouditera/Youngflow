@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9 - 2026-06-04
+
+### Changed
+- Removed automatic stage/worker output subdirectory creation before agent execution.
+- Agents now create any needed output subdirectories on demand via their own tools; `.youngflow/` engine metadata is unchanged.
+
 ## 0.2.8 - 2026-06-04
 
 ### Changed

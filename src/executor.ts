@@ -285,9 +285,9 @@ export class Executor {
       : undefined;
     if (itemKey) stageId = `${stage.id}/${itemKey}`;
 
-    // Resolve output dir
+    // Resolve output dir without creating per-stage directories eagerly.
     const outputDir =
-      opts.outputDir ?? this.workspace.ensureDir(stageId);
+      opts.outputDir ?? path.join(this.workspace.root, stageId);
 
     // Resolve skills
     const skillDirs = [...stage.skills].map((s) =>
