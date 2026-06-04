@@ -1,9 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { extractState, StateExtractionError } from "./state.js";
+import { extractState, getByPathSafe, StateExtractionError } from "./state.js";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import yaml from "js-yaml";
+
+describe("getByPathSafe", () => {
+  it("returns nested values and undefined for missing paths", () => {
+    const data = { metadata: { review_status: "pending" } };
+    expect(getByPathSafe(data, "metadata.review_status")).toBe("pending");
+    expect(getByPathSafe(data, "metadata.missing")).toBeUndefined();
+  });
+});
 
 describe("extractState", () => {
   let tmpDir: string;

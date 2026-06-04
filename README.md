@@ -258,6 +258,10 @@ stages:
 - id: security-analyzer
   type: map
   over: "feature_groups/GROUP-*.yaml"   # glob（相对 output_dir）
+  filter:                                # 可选：按 YAML 字段过滤 map item
+    field: "metadata.review_status"      # dotpath
+    match: "pending"                     # match / not_match / in / not_in 四选一
+    include_missing: true                # 字段缺失时也纳入迭代
   skills: [code-analyzer, bug-report]
   task: analysis.md
   prompt: |
@@ -286,6 +290,7 @@ stages:
 | `env` | object | — | 自定义环境变量（与 defaults.env 合并，stage 优先）|
 | `concurrency` | int | max_parallel | map 并发上限 |
 | `over` | string | — | map glob 模式（相对 output_dir） |
+| `filter` | object | — | map item 过滤；支持 `field` + `match` / `not_match` / `in` / `not_in` + `include_missing` |
 | `state` | object | — | 状态提取规则（见 [Routes 与 State](#routes-与-state)）|
 | `routes` | list | — | 条件路由（见 [Routes 与 State](#routes-与-state)）|
 | `tasks` | list | — | parallel 子任务列表 |

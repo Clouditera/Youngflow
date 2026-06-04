@@ -6,7 +6,9 @@
  */
 
 import { setMaxListeners } from "node:events";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import yaml from "js-yaml";
 import { Annotation, StateGraph, Send, END, START } from "@langchain/langgraph";
 import { Checkpoint } from "./checkpoint.js";
 import { compare, parseLiteral } from "./condition.js";
@@ -16,12 +18,13 @@ import { Runner, loadEnvFile } from "./runner.js";
 import { resolveModelConfig, type ModelConfig } from "./model-config.js";
 import * as report from "./report.js";
 import {
+  type FilterSpec,
   type FlowSpec,
   type StageSpec,
   StageType,
   resolveAgent,
 } from "./spec.js";
-import { extractState, StateExtractionError } from "./state.js";
+import { extractState, getByPathSafe, StateExtractionError } from "./state.js";
 import { Workspace } from "./workspace.js";
 import { logEvent, debug } from "./logger.js";
 
@@ -50,6 +53,72 @@ class Semaphore {
     this.permits++;
     if (this.waiters.length > 0) { const next = this.waiters.shift()!; next(); }
   }
+}
+
+function filterMapFiles(
+  files: string[],
+  filter: FilterSpec,
+  stageId: string,
+): Array<Record<string, any>> {
+  const items: Array<Record<string, any>> = [];
+  let passed = 0;
+  let skipped = 0;
+
+  for (const f of files) {
+    let data: Record<string, unknown>;
+    try {
+      const loaded = yaml.load(readFileSync(f, "utf-8"), { schema: yaml.JSON_SCHEMA });
+      if (typeof loaded !== "object" || loaded === null || Array.isArray(loaded)) {
+        throw new Error("not a YAML mapping");
+      }
+      data = loaded as Record<string, unknown>;
+    } catch (e) {
+      debug("orchestrator", "warning", "[%s] filter: skipping unparseable file %s: %s", stageId, f, e);
+      skipped++;
+      continue;
+    }
+
+    const value = getByPathSafe(data, filter.field);
+    if (value === undefined) {
+      if (filter.includeMissing) {
+        items.push({ _iterate_file: f });
+        passed++;
+      } else {
+        skipped++;
+      }
+      continue;
+    }
+
+    const strValue = String(value);
+    let include = false;
+    if (filter.match !== undefined) {
+      include = strValue === filter.match;
+    } else if (filter.notMatch !== undefined) {
+      include = strValue !== filter.notMatch;
+    } else if (filter.in !== undefined) {
+      include = filter.in.includes(strValue);
+    } else if (filter.notIn !== undefined) {
+      include = !filter.notIn.includes(strValue);
+    }
+
+    if (include) {
+      items.push({ _iterate_file: f });
+      passed++;
+    } else {
+      skipped++;
+    }
+  }
+
+  logEvent({
+    category: "stage",
+    event: "filter",
+    stage: stageId,
+    glob_total: files.length,
+    filter_passed: passed,
+    filter_skipped: skipped,
+  });
+
+  return items;
 }
 
 // ---------------------------------------------------------------------------
@@ -622,7 +691,10 @@ export class Orchestrator {
 
     if (stage.type === StageType.MAP) {
       const files = this.workspace.findFiles(stage.over ?? "");
-      return files.map((f) => ({ _iterate_file: f }));
+      if (!stage.filter) {
+        return files.map((f) => ({ _iterate_file: f }));
+      }
+      return filterMapFiles(files, stage.filter, stage.id);
     }
 
     return [];

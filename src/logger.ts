@@ -170,6 +170,15 @@ export interface DispatchEvent {
   count: number;
 }
 
+export interface FilterEvent {
+  category: "stage";
+  event: "filter";
+  stage: string;
+  glob_total: number;
+  filter_passed: number;
+  filter_skipped: number;
+}
+
 export interface RouteEvent {
   category: "stage";
   event: "route";
@@ -278,6 +287,7 @@ export type YoungFlowEvent =
   | StageSkippedEvent
   | StageFailedEvent
   | DispatchEvent
+  | FilterEvent
   | RouteEvent
   | ProcessErrorEvent
   // agent
@@ -445,6 +455,12 @@ function formatEvent(event: YoungFlowEvent): FormattedEvent {
         module: "orchestrator",
         level: LogLevel.INFO,
         text: `[${event.stage}] dispatching ${event.count} items`,
+      };
+    case "filter":
+      return {
+        module: "orchestrator",
+        level: LogLevel.INFO,
+        text: `[${event.stage}] filter: total=${event.glob_total} passed=${event.filter_passed} skipped=${event.filter_skipped}`,
       };
     case "route":
       return {

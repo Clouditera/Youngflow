@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.7 - 2026-06-04
+
+### Added
+- Added map stage `filter` for YAML field-based item filtering with `match`, `not_match`, `in`, `not_in`, and `include_missing`.
+- Map glob results are filtered before worker dispatch; excluded files do not start agent sessions or create item checkpoints/log entries.
+
 ## 0.2.6 - 2026-06-03
 
 ### Fixed

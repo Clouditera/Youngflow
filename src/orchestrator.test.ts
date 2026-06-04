@@ -225,6 +225,86 @@ describe("multi-target routing + join integration", () => {
   });
 });
 
+describe("map stage filter", () => {
+  const tmpDirs: string[] = [];
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function makeMapFilterFlow(filterYaml?: string): { dir: string; flowPath: string; outDir: string } {
+    const dir = path.join(os.tmpdir(), `youngflow-map-filter-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    mkdirSync(path.join(outDir, "findings"), { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    writeFileSync(path.join(outDir, "findings", "pending.yaml"), "metadata:\n  review_status: pending\n");
+    writeFileSync(path.join(outDir, "findings", "new.yaml"), "metadata:\n  review_status: new\n");
+    writeFileSync(path.join(outDir, "findings", "reproduced.yaml"), "metadata:\n  review_status: reproduced\n");
+    writeFileSync(path.join(outDir, "findings", "missing.yaml"), "metadata: {}\n");
+    writeFileSync(path.join(outDir, "findings", "corrupt.yaml"), "metadata: [\n");
+    const lines = [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: review",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over: findings/*.yaml",
+      "    concurrency: 1",
+    ];
+    if (filterYaml) {
+      lines.push("    filter:", ...filterYaml.split("\n").map((line) => `      ${line}`));
+    }
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, lines.join("\n"));
+    return { dir, flowPath, outDir };
+  }
+
+  async function runMapFilter(filterYaml?: string): Promise<string[]> {
+    const { dir, flowPath, outDir } = makeMapFilterFlow(filterYaml);
+    tmpDirs.push(dir);
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const executed: string[] = [];
+    (orch as any).executor = {
+      execute: async (stage: any, options: any) => {
+        executed.push(path.basename(options.iterateFile, ".yaml"));
+        return { stageId: stage.id, exitCode: 0, durationMs: 1, outputDir: options.outputDir };
+      },
+    };
+    await orch.run();
+    return executed.sort();
+  }
+
+  it("keeps existing behavior when no filter is configured", async () => {
+    expect(await runMapFilter()).toEqual(["corrupt", "missing", "new", "pending", "reproduced"]);
+  });
+
+  it("supports match and skips corrupt YAML", async () => {
+    expect(await runMapFilter("field: metadata.review_status\nmatch: pending")).toEqual(["pending"]);
+  });
+
+  it("supports not_match", async () => {
+    expect(await runMapFilter("field: metadata.review_status\nnot_match: reproduced")).toEqual(["new", "pending"]);
+  });
+
+  it("supports in", async () => {
+    expect(await runMapFilter("field: metadata.review_status\nin: [pending, new]")).toEqual(["new", "pending"]);
+  });
+
+  it("supports not_in", async () => {
+    expect(await runMapFilter("field: metadata.review_status\nnot_in: [reproduced]")).toEqual(["new", "pending"]);
+  });
+
+  it("includes missing fields only when include_missing is true", async () => {
+    expect(await runMapFilter("field: metadata.review_status\nmatch: pending\ninclude_missing: true")).toEqual(["missing", "pending"]);
+    expect(await runMapFilter("field: metadata.review_status\nmatch: pending\ninclude_missing: false")).toEqual(["pending"]);
+  });
+});
+
 describe("flows/demo-join deterministic validation", () => {
   const tmpDirs: string[] = [];
   afterEach(() => {

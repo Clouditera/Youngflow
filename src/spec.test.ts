@@ -137,4 +137,70 @@ describe("parseFlow", () => {
 
     expect(() => parseFlow(flowPath)).toThrow(/requires max_loops/);
   });
+
+  function writeMapFilterFlow(dir: string, filterLines: string[]): string {
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: review",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over: findings/*.yaml",
+      "    filter:",
+      ...filterLines.map((line) => `      ${line}`),
+    ].join("\n"));
+    return flowPath;
+  }
+
+  it("parses map filter match and defaults include_missing to false", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const spec = parseFlow(writeMapFilterFlow(dir, [
+      "field: metadata.review_status",
+      "match: pending",
+    ]));
+
+    expect(spec.stages[0].filter).toEqual({
+      field: "metadata.review_status",
+      match: "pending",
+      notMatch: undefined,
+      in: undefined,
+      notIn: undefined,
+      includeMissing: false,
+    });
+  });
+
+  it("parses map filter not_match, in, and not_in", () => {
+    for (const filterLines of [
+      ["field: status", "not_match: reproduced"],
+      ["field: status", "in: [pending, new]"],
+      ["field: status", "not_in: [reproduced, dismissed]", "include_missing: true"],
+    ]) {
+      const dir = makeFlowDir();
+      tmpDirs.push(dir);
+      const spec = parseFlow(writeMapFilterFlow(dir, filterLines));
+      expect(spec.stages[0].filter?.field).toBe("status");
+    }
+  });
+
+  it("rejects map filter with multiple operators", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    expect(() => parseFlow(writeMapFilterFlow(dir, [
+      "field: status",
+      "match: pending",
+      "not_match: reproduced",
+    ]))).toThrow(/mutually exclusive/);
+  });
+
+  it("rejects map filter without an operator", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    expect(() => parseFlow(writeMapFilterFlow(dir, [
+      "field: status",
+    ]))).toThrow(/requires one of match\/not_match\/in\/not_in/);
+  });
 });

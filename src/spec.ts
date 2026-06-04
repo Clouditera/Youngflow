@@ -51,6 +51,15 @@ export interface RouteSpec {
   readonly maxLoops: number | undefined;
 }
 
+export interface FilterSpec {
+  readonly field: string;
+  readonly match: string | undefined;
+  readonly notMatch: string | undefined;
+  readonly in: readonly string[] | undefined;
+  readonly notIn: readonly string[] | undefined;
+  readonly includeMissing: boolean;
+}
+
 export interface StageSpec {
   readonly id: string;
   readonly name: string;
@@ -68,6 +77,7 @@ export interface StageSpec {
   readonly routes: readonly RouteSpec[];
   readonly tasks: readonly TaskSpec[];
   readonly over: string | undefined;
+  readonly filter: FilterSpec | undefined;
   readonly stateExtract: StateExtractSpec | undefined;
 }
 
@@ -210,7 +220,19 @@ function parseStage(raw: Record<string, any>): StageSpec {
     routes: (raw.routes ?? []).map(parseRoute),
     tasks: (raw.tasks ?? []).map(parseTask),
     over: raw.over ?? undefined,
+    filter: raw.filter ? parseFilter(raw.filter) : undefined,
     stateExtract,
+  };
+}
+
+function parseFilter(raw: Record<string, any>): FilterSpec {
+  return {
+    field: raw.field,
+    match: raw.match ?? undefined,
+    notMatch: raw.not_match ?? undefined,
+    in: raw.in ? [...raw.in] : undefined,
+    notIn: raw.not_in ? [...raw.not_in] : undefined,
+    includeMissing: raw.include_missing ?? false,
   };
 }
 
@@ -369,6 +391,17 @@ function validateSemantics(
 
     if (stageType === "map" && !stage.over) {
       errors.push(`[semantic] ${prefix}: 'over' is required for type 'map'`);
+    }
+
+    if (stage.filter) {
+      const ops = [stage.filter.match, stage.filter.not_match, stage.filter.in, stage.filter.not_in]
+        .filter((v) => v !== undefined);
+      if (ops.length === 0) {
+        errors.push(`[semantic] ${prefix}: filter requires one of match/not_match/in/not_in`);
+      }
+      if (ops.length > 1) {
+        errors.push(`[semantic] ${prefix}: filter match/not_match/in/not_in are mutually exclusive`);
+      }
     }
 
     // Verify task file

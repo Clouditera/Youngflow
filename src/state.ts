@@ -116,7 +116,7 @@ function evalFile(rule: Record<string, string>, baseDir: string): unknown {
   throw new Error(`file rule must have 'field' or 'keys_of': ${JSON.stringify(rule)}`);
 }
 
-function getByPath(data: Record<string, unknown>, dotPath: string): unknown {
+export function getByPath(data: Record<string, unknown>, dotPath: string): unknown {
   let current: unknown = data;
   for (const part of dotPath.split(".")) {
     if (typeof current !== "object" || current === null) {
@@ -128,4 +128,12 @@ function getByPath(data: Record<string, unknown>, dotPath: string): unknown {
     }
   }
   return current;
+}
+
+export function getByPathSafe(data: Record<string, unknown>, dotPath: string): unknown | undefined {
+  try {
+    return getByPath(data, dotPath);
+  } catch {
+    return undefined;
+  }
 }
