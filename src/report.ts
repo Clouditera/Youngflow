@@ -245,6 +245,7 @@ export function collectStageReports(
       applyCheckpoint(info, doneFile);
     }
 
+    info.type = stage.type;
     stages.push(info);
   }
   return stages;
@@ -355,7 +356,7 @@ export function refresh(
   try {
     const stages = collectStageReports(spec, workspace);
     const history = collectRunHistory(workspace, stages);
-    return renderHtml(stages, history, workspace.root, workspace.reportPath);
+    return renderHtml(stages, history, workspace.root, workspace.reportPath, workspace.executionLogPath);
   } catch (e) {
     debug("report", "debug", "Report refresh failed: %s", e);
     return undefined;
@@ -542,11 +543,227 @@ function fmtDate(value: string): string {
   return d ? d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC") : value;
 }
 
+interface ExecutionWorker {
+  id: string;
+  status: string;
+  duration_ms: number;
+  tokens_total: number;
+  tools: number;
+  session_file?: string;
+}
+
+interface ExecutionStep {
+  seq: number;
+  stage: string;
+  baseStage: string;
+  type: string;
+  status: string;
+  duration_ms: number;
+  tokens_total: number;
+  tools: number;
+  session_file?: string;
+  workers: ExecutionWorker[];
+  dispatch_count?: number;
+  fork_group?: string;
+}
+
+function renderStaticGraph(stages: StageReport[]): string {
+  const graphNodes: string[] = [];
+  for (let i = 0; i < stages.length; i++) {
+    const s = stages[i];
+    const [icon, color] = STATUS[s.status] ?? ["⏳", "#555"];
+    const dur = fmt(s.duration_ms);
+
+    if ((s.type === "parallel" || s.type === "map") && s.children.length > 0) {
+      const childHtml = s.children
+        .map((c) => {
+          const [ci, cc] = STATUS[c.status] ?? ["⏳", "#555"];
+          return `<div class="graph-node" style="border-color:${cc}">${ci} ${esc(c.name)} <span style="color:#777">(${fmt(c.duration_ms)})</span></div>`;
+        })
+        .join("");
+      graphNodes.push(`<div class="graph-parallel">${childHtml}</div>`);
+    } else {
+      graphNodes.push(`<div class="graph-node" style="border-color:${color}">${icon} ${esc(s.id)} <span style="color:#777">(${dur})</span></div>`);
+    }
+    if (i < stages.length - 1) graphNodes.push('<div class="graph-arrow">→</div>');
+  }
+  return `<section class="section-card"><div class="section-header"><h2 class="section-title">Flow Graph</h2></div><div class="graph">${graphNodes.join("")}</div></section>`;
+}
+
+function parseExecutionTimeline(executionLogPath: string, stages: StageReport[]): ExecutionStep[] {
+  if (!existsSync(executionLogPath)) return [];
+  const stageTypes = new Map(stages.map((s) => [s.id, s.type]));
+  const steps: ExecutionStep[] = [];
+  const active = new Map<string, ExecutionStep>();
+  const pendingDispatch = new Map<string, ExecutionStep>();
+  const pendingForkTargets = new Map<string, string>();
+  let seq = 0;
+  let forkSeq = 0;
+
+  const lines = readFileSync(executionLogPath, "utf-8").split(/\r?\n/).filter((l) => l.trim());
+  for (let i = 0; i < lines.length; i++) {
+    let event: Record<string, any>;
+    try {
+      event = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const eventName = String(event.event ?? event.type ?? "");
+    if (event.category === "engine" && eventName === "checkpoint_save") {
+      const stage = String(event.stage ?? "");
+      const step = active.get(stage);
+      if (step && step.status === "running" && step.type === "join") step.status = "success";
+      continue;
+    }
+    if (event.category !== "stage") continue;
+
+    if (eventName === "route") {
+      const targets: string[] = [];
+      const from = String(event.stage ?? "");
+      let j = i;
+      while (j < lines.length) {
+        try {
+          const e = JSON.parse(lines[j]) as Record<string, any>;
+          if (e.category !== "stage" || String(e.event ?? e.type ?? "") !== "route" || String(e.stage ?? "") !== from) break;
+          if (e.target) targets.push(String(e.target));
+          j++;
+        } catch {
+          break;
+        }
+      }
+      const routedStep = active.get(from);
+      if (routedStep && routedStep.status === "running" && routedStep.type === "join") {
+        routedStep.status = "success";
+      }
+      if (targets.length > 1) {
+        const group = `fork-${++forkSeq}`;
+        for (const target of targets) pendingForkTargets.set(target, group);
+      }
+      i = Math.max(i, j - 1);
+      continue;
+    }
+
+    if (eventName === "dispatch") {
+      const stage = String(event.stage ?? "");
+      const stageType = stageTypes.get(stage);
+      const step = makeExecutionStep(++seq, stage, stage, stageType && stageType !== "single" ? stageType : "map", pendingForkTargets.get(stage));
+      step.dispatch_count = numberOrUndefined(event.count);
+      steps.push(step);
+      active.set(stage, step);
+      pendingDispatch.set(stage, step);
+      pendingForkTargets.delete(stage);
+      continue;
+    }
+
+    if (eventName === "stage_start") {
+      const stage = String(event.stage ?? "");
+      const { baseStage } = splitWorkerStage(stage);
+      if (stage !== baseStage && pendingDispatch.has(baseStage)) continue;
+      const step = makeExecutionStep(++seq, stage, baseStage, stageTypes.get(baseStage) ?? "single", pendingForkTargets.get(baseStage));
+      steps.push(step);
+      active.set(stage, step);
+      pendingForkTargets.delete(baseStage);
+      continue;
+    }
+
+    if (eventName === "stage_done") {
+      const stage = String(event.stage ?? "");
+      const { baseStage, workerId } = splitWorkerStage(stage);
+      const status = Number(event.exit_code ?? 0) === 0 ? "success" : "failed";
+      if (workerId && pendingDispatch.has(baseStage)) {
+        const parent = pendingDispatch.get(baseStage)!;
+        parent.workers.push({
+          id: workerId,
+          status,
+          duration_ms: Number(event.duration_ms ?? 0),
+          tokens_total: Number(event.tokens_total ?? 0),
+          tools: Number(event.tools ?? 0),
+          session_file: event.session_file ? String(event.session_file) : undefined,
+        });
+        parent.duration_ms = Math.max(parent.duration_ms, Number(event.duration_ms ?? 0));
+        parent.tokens_total += Number(event.tokens_total ?? 0);
+        parent.tools += Number(event.tools ?? 0);
+        parent.status = parent.workers.some((w) => w.status === "failed") ? "failed" : "success";
+        continue;
+      }
+      const step = active.get(stage) ?? active.get(baseStage);
+      if (!step) continue;
+      step.status = status;
+      step.duration_ms = Number(event.duration_ms ?? 0);
+      step.tokens_total = Number(event.tokens_total ?? 0);
+      step.tools = Number(event.tools ?? 0);
+      step.session_file = event.session_file ? String(event.session_file) : undefined;
+    }
+  }
+  return steps;
+}
+
+function makeExecutionStep(seq: number, stage: string, baseStage: string, type: string, forkGroup?: string): ExecutionStep {
+  return { seq, stage, baseStage, type, status: "running", duration_ms: 0, tokens_total: 0, tools: 0, workers: [], fork_group: forkGroup };
+}
+
+function splitWorkerStage(stage: string): { baseStage: string; workerId?: string } {
+  const idx = stage.indexOf("/");
+  if (idx < 0) return { baseStage: stage };
+  return { baseStage: stage.slice(0, idx), workerId: stage.slice(idx + 1) };
+}
+
+function renderExecutionTimeline(steps: ExecutionStep[], reportPath: string): string {
+  if (steps.length === 0) return "";
+  const parts: string[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (step.fork_group) {
+      const group = step.fork_group;
+      const groupSteps: ExecutionStep[] = [];
+      while (i < steps.length && steps[i].fork_group === group) groupSteps.push(steps[i++]);
+      i--;
+      parts.push(`<div class="exec-fork">${groupSteps.map((s) => `<div class="exec-fork-branch">${renderExecutionNode(s, reportPath)}</div>`).join("")}</div>`);
+    } else {
+      parts.push(renderExecutionNode(step, reportPath));
+    }
+    if (i < steps.length - 1) parts.push('<div class="exec-arrow">→</div>');
+  }
+  return `<section class="section-card"><div class="section-header"><h2 class="section-title">Execution Timeline</h2><span class="section-hint">Actual execution order with per-instance metrics. Scroll → for more.</span></div><div class="exec-timeline-wrapper"><div class="exec-timeline" tabindex="0" role="region" aria-label="Execution timeline">${parts.join("")}</div></div></section>`;
+}
+
+function renderExecutionNode(step: ExecutionStep, reportPath: string): string {
+  const [icon] = STATUS[step.status] ?? ["⏳"];
+  const isJoin = step.type === "join";
+  const cls = `exec-node${step.status === "failed" ? " failed" : ""}${isJoin ? " join-node" : ""}`;
+  const label = `${step.baseStage}, ${step.status}, ${fmt(step.duration_ms)}`;
+  if (isJoin) {
+    return `<div class="${cls}" role="group" aria-label="${esc(label)}"><div class="exec-node-header"><span class="exec-node-title">⏩ ${esc(step.baseStage)}</span></div></div>`;
+  }
+  const badge = step.workers.length > 0 || step.dispatch_count != null ? `${step.type} · ${step.dispatch_count ?? step.workers.length}` : step.type;
+  const session = step.session_file ? `<div class="exec-node-session"><a class="link-chip" href="${esc(sessionHref(step.session_file, reportPath))}" aria-label="Open session for ${esc(step.stage)} execution ${step.seq}">📋 Session</a></div>` : "";
+  const workers = step.workers.length > 0 ? renderExecutionWorkers(step, reportPath) : "";
+  return `<div class="${cls}" role="group" aria-label="${esc(label)}"><div class="exec-node-header"><span class="exec-node-title">${icon} ${esc(step.baseStage)}</span><span class="exec-node-badge">${esc(badge)}</span></div><div class="exec-node-stats"><span><span class="value">${fmt(step.duration_ms)}</span> dur</span><span><span class="value">${step.tools.toLocaleString()}</span> tools</span><span><span class="value">${esc(fmtCompactNumber(step.tokens_total))}</span> tok</span></div>${session}${workers}</div>`;
+}
+
+function renderExecutionWorkers(step: ExecutionStep, reportPath: string): string {
+  const failed = step.workers.filter((w) => w.status === "failed").length;
+  const success = step.workers.filter((w) => w.status === "success").length;
+  const open = failed > 0 || step.workers.length <= 6 ? " open" : "";
+  const rows = step.workers.map((w) => {
+    const [icon] = STATUS[w.status] ?? ["⏳"];
+    const session = w.session_file ? `<a class="link-chip" href="${esc(sessionHref(w.session_file, reportPath))}" aria-label="Open session for ${esc(step.baseStage)} worker ${esc(w.id)}">📋</a>` : "";
+    return `<div class="exec-worker-row${w.status === "failed" ? " worker-failed" : ""}"><span>${icon}</span><span class="exec-worker-name">${esc(w.id)}</span><span class="exec-worker-stat">${fmt(w.duration_ms)}</span>${session}</div>`;
+  }).join("");
+  return `<details class="exec-workers"${open}><summary>${step.workers.length} workers · ${success} success · ${failed} failed</summary><div class="exec-worker-list">${rows}</div></details>`;
+}
+
+function sessionHref(sessionFile: string, reportPath: string): string {
+  const html = sessionFile.replace(/\.jsonl$/, ".html");
+  return rel(existsSync(html) ? html : sessionFile, path.dirname(reportPath));
+}
+
 function renderHtml(
   stages: StageReport[],
   history: RunHistoryEntry[],
   root: string,
   reportPath: string,
+  executionLogPath: string,
 ): string {
   mkdirSync(path.dirname(reportPath), { recursive: true });
 
@@ -561,33 +778,10 @@ function renderHtml(
   const failures = stages.filter((s) => s.status === "failed").length;
   const apiErrors = stages.reduce((s, st) => s + st.api_errors, 0);
 
-  // Graph
-  const graphNodes: string[] = [];
-  for (let i = 0; i < stages.length; i++) {
-    const s = stages[i];
-    const [icon, color] = STATUS[s.status] ?? ["⏳", "#555"];
-    const dur = fmt(s.duration_ms);
-
-    if (
-      (s.type === "parallel" || s.type === "map") &&
-      s.children.length > 0
-    ) {
-      const childHtml = s.children
-        .map((c) => {
-          const [ci, cc] = STATUS[c.status] ?? ["⏳", "#555"];
-          return `<div class="graph-node" style="border-color:${cc}">${ci} ${c.name} <span style="color:#777">(${fmt(c.duration_ms)})</span></div>`;
-        })
-        .join("");
-      graphNodes.push(`<div class="graph-parallel">${childHtml}</div>`);
-    } else {
-      graphNodes.push(
-        `<div class="graph-node" style="border-color:${color}">${icon} ${s.id} <span style="color:#777">(${dur})</span></div>`,
-      );
-    }
-    if (i < stages.length - 1) {
-      graphNodes.push('<div class="graph-arrow">→</div>');
-    }
-  }
+  const executionSteps = parseExecutionTimeline(executionLogPath, stages);
+  const executionSection = executionSteps.length > 0
+    ? renderExecutionTimeline(executionSteps, reportPath)
+    : renderStaticGraph(stages);
 
   // Stage cards
   const cards = stages.map((s) => {
@@ -647,12 +841,12 @@ function renderHtml(
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--yf-bg);color:var(--yf-text);font-size:13px;line-height:1.5;padding:24px}.report-shell{max-width:1440px;margin:0 auto}a{color:var(--yf-accent);text-decoration:none}a:hover{text-decoration:underline}a:focus-visible,summary:focus-visible{outline:2px solid var(--yf-accent);outline-offset:2px;border-radius:var(--yf-radius-sm)}.num,.metric-value{font-variant-numeric:tabular-nums}.timestamp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 h1{font-size:22px;line-height:28px;font-weight:650}.report-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:20px}.report-subtitle{color:var(--yf-text-muted);margin-top:4px}.generated{color:var(--yf-text-muted);font-size:12px;text-align:right}.summary-panel,.section-card{background:var(--yf-surface-1);border:1px solid var(--yf-border);border-radius:var(--yf-radius-lg);margin-bottom:16px}.summary-panel{padding:16px}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.metric-label{color:var(--yf-text-muted);font-size:12px}.metric-value{color:var(--yf-text);font-size:15px;font-weight:650}.section-card{overflow:hidden}.section-header{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:14px 16px;border-bottom:1px solid var(--yf-border-subtle)}.section-title{font-size:15px;line-height:22px;font-weight:650}.section-hint{color:var(--yf-text-muted);font-size:12px}.run-ledger{width:100%;border-collapse:collapse}.run-ledger th,.run-ledger td{padding:10px 12px;border-bottom:1px solid var(--yf-border-subtle);text-align:left;vertical-align:middle}.run-ledger th{color:var(--yf-text-muted);font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.02em}.run-ledger td{color:var(--yf-text-secondary)}.run-ledger tr.current{background:rgba(56,189,248,.06)}.run-actions{display:inline-flex;flex-wrap:wrap;gap:8px}.disabled-link{color:var(--yf-text-faint)}.status-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid currentColor}.status-success{color:var(--yf-success);background:var(--yf-success-soft)}.status-failed{color:var(--yf-danger);background:var(--yf-danger-soft)}.status-running,.status-pending{color:var(--yf-pending);background:var(--yf-pending-soft)}.status-warning{color:var(--yf-warning);background:var(--yf-warning-soft)}
-.graph{display:flex;align-items:center;gap:8px;overflow-x:auto;padding:14px 16px}.graph-node{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--yf-border);background:var(--yf-surface-2);white-space:nowrap}.graph-arrow{color:var(--yf-text-faint)}.graph-parallel{display:flex;flex-direction:column;gap:4px;border:1px dashed var(--yf-border);border-radius:8px;padding:8px}.stage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-items:start}.stage-card{background:var(--yf-surface-1);border:1px solid var(--yf-border);border-radius:12px;padding:20px;max-height:520px;display:flex;flex-direction:column;overflow:hidden}.stage-card-body{flex:1;min-height:0;overflow-y:auto;padding-right:2px}.stage-card-body::-webkit-scrollbar,.worker-table-wrap::-webkit-scrollbar{width:4px;height:4px}.stage-card-body::-webkit-scrollbar-thumb,.worker-table-wrap::-webkit-scrollbar-thumb{background:var(--yf-border-strong);border-radius:2px}.stage-failed{border-color:var(--yf-danger);background:linear-gradient(0deg,var(--yf-danger-soft),transparent 45%),var(--yf-surface-1)}.failure-note{color:var(--yf-danger);margin-bottom:10px}.stage-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-shrink:0}.stage-title{font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stage-badge{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--yf-surface-3);color:var(--yf-text-muted);flex-shrink:0}.stage-stats{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--yf-text-muted)}.stage-stats .value{color:var(--yf-text);font-weight:500}.session-link{display:inline-block;margin-top:8px;color:var(--yf-accent);text-decoration:none;font-size:13px;border:1px solid var(--yf-border);border-radius:999px;padding:2px 8px}.worker-details{margin-top:12px;border:1px solid var(--yf-border-subtle);border-radius:var(--yf-radius-md);overflow:hidden}.worker-details>summary{cursor:pointer;padding:10px 12px;color:var(--yf-text-secondary);background:var(--yf-surface-2)}.worker-table-wrap{max-height:320px;overflow:auto}.worker-table{width:100%;min-width:520px;border-collapse:collapse}.worker-table th,.worker-table td{padding:8px 10px;border-top:1px solid var(--yf-border-subtle);text-align:left}.worker-table th{color:var(--yf-text-muted);font-size:11px;text-transform:uppercase}.worker-failed{background:var(--yf-danger-soft)}.gantt{padding:20px}.gantt-axis{position:relative;height:20px;margin-bottom:8px;margin-left:160px}.gantt-tick{position:absolute;font-size:11px;color:var(--yf-text-faint);transform:translateX(-50%)}.gantt-row{display:flex;align-items:center;height:28px}.gantt-label{width:160px;font-size:12px;color:var(--yf-text-muted);text-align:right;padding-right:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}.gantt-label-parent{cursor:pointer;color:var(--yf-text)}.gantt-label-child{font-size:11px;color:var(--yf-text-faint);padding-left:16px}.gantt-group>summary{list-style:none}.gantt-group>summary::-webkit-details-marker{display:none}.gantt-group>summary .gantt-label-parent::before{content:'▶ ';font-size:9px;color:var(--yf-text-faint)}.gantt-group[open]>summary .gantt-label-parent::before{content:'▼ ';font-size:9px;color:var(--yf-text-faint)}.gantt-track{flex:1;position:relative;height:18px;background:var(--yf-bg);border-radius:4px}.gantt-bar{position:absolute;height:100%;border-radius:4px;min-width:3px;opacity:.85}.gantt-bar:hover{opacity:1}@media (max-width:760px){body{padding:16px}.report-header{flex-direction:column}.generated{text-align:left}.stage-grid{grid-template-columns:1fr}.stage-card{max-height:none}.stage-card-body{overflow:visible}.worker-table-wrap{max-height:none}}
+.exec-timeline-wrapper{position:relative}.exec-timeline-wrapper::after{content:'';position:absolute;right:0;top:0;bottom:0;width:32px;background:linear-gradient(to right,transparent,var(--yf-surface-1));pointer-events:none;opacity:.8}.exec-timeline{display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding:16px;scrollbar-width:thin;scrollbar-color:var(--yf-border-strong) transparent}.exec-timeline::-webkit-scrollbar{height:6px}.exec-timeline::-webkit-scrollbar-thumb{background:var(--yf-border-strong);border-radius:3px}.exec-arrow{display:flex;align-items:center;padding:0 4px;color:var(--yf-text-faint);font-size:14px;flex-shrink:0;align-self:center}.exec-node{flex-shrink:0;width:200px;background:var(--yf-surface-1);border:1px solid var(--yf-border);border-radius:var(--yf-radius-md);overflow:hidden}.exec-node.failed{border-color:rgba(248,113,113,.45)}.exec-node.join-node{width:100px;background:var(--yf-surface-2);border-style:dashed}.exec-node-header{padding:10px 12px 6px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}.exec-node-title{font-size:13px;font-weight:650;line-height:18px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.exec-node-badge{flex-shrink:0;font-size:10px;padding:1px 6px;border-radius:999px;background:var(--yf-surface-3);color:var(--yf-text-muted);white-space:nowrap}.exec-node-stats{padding:0 12px 8px;display:flex;flex-wrap:wrap;gap:6px 12px;font-size:11px;color:var(--yf-text-muted)}.exec-node-stats .value{color:var(--yf-text-secondary);font-weight:600;font-variant-numeric:tabular-nums}.exec-node-session{display:block;padding:0 12px 10px}.link-chip{display:inline-block;color:var(--yf-accent);border:1px solid var(--yf-border);border-radius:999px;padding:2px 8px;font-size:12px}.exec-workers{border-top:1px solid var(--yf-border-subtle)}.exec-workers>summary{padding:8px 12px;cursor:pointer;font-size:12px;font-weight:600;color:var(--yf-text-secondary);background:var(--yf-surface-2);list-style:none}.exec-workers>summary::-webkit-details-marker{display:none}.exec-workers>summary::before{content:'▶ ';font-size:9px;color:var(--yf-text-faint)}.exec-workers[open]>summary::before{content:'▼ '}.exec-worker-list{max-height:240px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--yf-border-strong) transparent}.exec-worker-list::-webkit-scrollbar{width:4px}.exec-worker-list::-webkit-scrollbar-thumb{background:var(--yf-border-strong);border-radius:2px}.exec-worker-row{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:11px;border-top:1px solid var(--yf-border-subtle)}.exec-worker-row.worker-failed{background:var(--yf-danger-soft)}.exec-worker-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--yf-text)}.exec-worker-stat{color:var(--yf-text-muted);white-space:nowrap}.exec-fork{display:flex;flex-direction:column;gap:8px;flex-shrink:0;border-left:2px solid var(--yf-border);padding-left:8px;margin-left:-4px}.exec-fork-branch{display:flex;align-items:flex-start;gap:0}.graph{display:flex;align-items:center;gap:8px;overflow-x:auto;padding:14px 16px}.graph-node{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--yf-border);background:var(--yf-surface-2);white-space:nowrap}.graph-arrow{color:var(--yf-text-faint)}.graph-parallel{display:flex;flex-direction:column;gap:4px;border:1px dashed var(--yf-border);border-radius:8px;padding:8px}.stage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-items:start}.stage-card{background:var(--yf-surface-1);border:1px solid var(--yf-border);border-radius:12px;padding:20px;max-height:520px;display:flex;flex-direction:column;overflow:hidden}.stage-card-body{flex:1;min-height:0;overflow-y:auto;padding-right:2px}.stage-card-body::-webkit-scrollbar,.worker-table-wrap::-webkit-scrollbar{width:4px;height:4px}.stage-card-body::-webkit-scrollbar-thumb,.worker-table-wrap::-webkit-scrollbar-thumb{background:var(--yf-border-strong);border-radius:2px}.stage-failed{border-color:var(--yf-danger);background:linear-gradient(0deg,var(--yf-danger-soft),transparent 45%),var(--yf-surface-1)}.failure-note{color:var(--yf-danger);margin-bottom:10px}.stage-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-shrink:0}.stage-title{font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stage-badge{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--yf-surface-3);color:var(--yf-text-muted);flex-shrink:0}.stage-stats{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--yf-text-muted)}.stage-stats .value{color:var(--yf-text);font-weight:500}.session-link{display:inline-block;margin-top:8px;color:var(--yf-accent);text-decoration:none;font-size:13px;border:1px solid var(--yf-border);border-radius:999px;padding:2px 8px}.worker-details{margin-top:12px;border:1px solid var(--yf-border-subtle);border-radius:var(--yf-radius-md);overflow:hidden}.worker-details>summary{cursor:pointer;padding:10px 12px;color:var(--yf-text-secondary);background:var(--yf-surface-2)}.worker-table-wrap{max-height:320px;overflow:auto}.worker-table{width:100%;min-width:520px;border-collapse:collapse}.worker-table th,.worker-table td{padding:8px 10px;border-top:1px solid var(--yf-border-subtle);text-align:left}.worker-table th{color:var(--yf-text-muted);font-size:11px;text-transform:uppercase}.worker-failed{background:var(--yf-danger-soft)}.gantt{padding:20px}.gantt-axis{position:relative;height:20px;margin-bottom:8px;margin-left:160px}.gantt-tick{position:absolute;font-size:11px;color:var(--yf-text-faint);transform:translateX(-50%)}.gantt-row{display:flex;align-items:center;height:28px}.gantt-label{width:160px;font-size:12px;color:var(--yf-text-muted);text-align:right;padding-right:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}.gantt-label-parent{cursor:pointer;color:var(--yf-text)}.gantt-label-child{font-size:11px;color:var(--yf-text-faint);padding-left:16px}.gantt-group>summary{list-style:none}.gantt-group>summary::-webkit-details-marker{display:none}.gantt-group>summary .gantt-label-parent::before{content:'▶ ';font-size:9px;color:var(--yf-text-faint)}.gantt-group[open]>summary .gantt-label-parent::before{content:'▼ ';font-size:9px;color:var(--yf-text-faint)}.gantt-track{flex:1;position:relative;height:18px;background:var(--yf-bg);border-radius:4px}.gantt-bar{position:absolute;height:100%;border-radius:4px;min-width:3px;opacity:.85}.gantt-bar:hover{opacity:1}@media (max-width:760px){body{padding:16px}.report-header{flex-direction:column}.generated{text-align:left}.exec-timeline{flex-direction:column;align-items:stretch;overflow-x:visible}.exec-node,.exec-node.join-node{width:100%}.exec-arrow{justify-content:center;padding:4px 0;transform:rotate(90deg)}.exec-fork{flex-direction:column;border-left:none;border-top:2px solid var(--yf-border);padding-left:0;padding-top:8px;margin-left:0}.stage-grid{grid-template-columns:1fr}.stage-card{max-height:none}.stage-card-body{overflow:visible}.worker-table-wrap{max-height:none}}
 </style></head><body><div class="report-shell">
 <header class="report-header"><div><h1>YoungFlow Report</h1><div class="report-subtitle">Output: ${esc(root)}</div></div><div class="generated">Generated ${esc(fmtDate(new Date().toISOString()))}</div></header>
 <section class="summary-panel" aria-labelledby="current-run-title"><div class="section-header"><h2 id="current-run-title" class="section-title">Current Run</h2></div><div class="summary-grid"><div><div class="metric-label">Completion</div><div class="metric-value">${completed}/${stages.length} stages</div></div><div><div class="metric-label">Duration</div><div class="metric-value">${fmt(totalDur)}</div></div><div><div class="metric-label">Tools</div><div class="metric-value">${totalTools}</div></div><div><div class="metric-label">Tokens total</div><div class="metric-value">${totalTokens.toLocaleString()}</div></div><div><div class="metric-label">Failures</div><div class="metric-value">${failures}</div></div><div><div class="metric-label">API errors</div><div class="metric-value">${apiErrors}</div></div></div></section>
 ${renderRunHistory(history, reportPath)}
-<section class="section-card"><div class="section-header"><h2 class="section-title">Flow Graph</h2></div><div class="graph">${graphNodes.join("")}</div></section>
+${executionSection}
 <section class="section-card"><div class="section-header"><h2 class="section-title">Timeline</h2><span class="section-hint">Durations show observed wall time when start times are available.</span></div>${renderGantt(stages)}</section>
 <section><div class="section-header"><h2 class="section-title">Stage Details</h2><span class="section-hint">Stage cards wrap horizontally; large worker lists scroll inside each card.</span></div><div class="stage-grid">
 ${cards.join("")}</div></section>

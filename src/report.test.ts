@@ -57,6 +57,45 @@ describe("flow report run history", () => {
     expect(html).toContain("zai/glm-5.1");
   });
 
+  it("renders execution timeline from execution jsonl and keeps static graph fallback", () => {
+    const sessionDir = path.join(ws.sessionsDir, "alpha", "20260605-000000");
+    mkdirSync(sessionDir, { recursive: true });
+    const session = path.join(sessionDir, "session.jsonl");
+    const sessionHtml = path.join(sessionDir, "session.html");
+    writeFileSync(session, "{}\n");
+    writeFileSync(sessionHtml, "<html>session</html>");
+    writeFileSync(ws.executionLogPath, [
+      { ts: "2026-06-05T00:00:00Z", category: "stage", event: "stage_start", stage: "alpha" },
+      { ts: "2026-06-05T00:00:01Z", category: "stage", event: "stage_done", stage: "alpha", exit_code: 0, duration_ms: 1000, tools: 2, tokens_total: 126, session_file: session },
+      { ts: "2026-06-05T00:00:02Z", category: "stage", event: "route", stage: "alpha", target: "beta" },
+      { ts: "2026-06-05T00:00:03Z", category: "stage", event: "dispatch", stage: "beta", count: 2 },
+      { ts: "2026-06-05T00:00:04Z", category: "stage", event: "stage_start", stage: "beta/ITEM-1", iterate_file: "/tmp/ITEM-1.yaml" },
+      { ts: "2026-06-05T00:00:05Z", category: "stage", event: "stage_done", stage: "beta/ITEM-1", exit_code: 0, duration_ms: 2000, tools: 3, tokens_total: 200, session_file: session },
+      { ts: "2026-06-05T00:00:06Z", category: "stage", event: "stage_start", stage: "beta/ITEM-2", iterate_file: "/tmp/ITEM-2.yaml" },
+      { ts: "2026-06-05T00:00:07Z", category: "stage", event: "stage_done", stage: "beta/ITEM-2", exit_code: 1, duration_ms: 3000, tools: 4, tokens_total: 300, session_file: session },
+      { ts: "2026-06-05T00:00:08Z", category: "stage", event: "route", stage: "beta", target: "joiner" },
+      { ts: "2026-06-05T00:00:09Z", category: "stage", event: "stage_start", stage: "joiner" },
+    ].map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const timelineSpec: any = { stages: [
+      { id: "alpha", name: "Alpha", type: "single", tasks: [] },
+      { id: "beta", name: "Beta", type: "map", tasks: [] },
+      { id: "joiner", name: "Joiner", type: "join", tasks: [] },
+    ] };
+
+    const reportPath = refresh(timelineSpec, ws)!;
+    const html = readFileSync(reportPath, "utf-8");
+
+    expect(html).toContain("Execution Timeline");
+    expect(html).not.toContain("<h2 class=\"section-title\">Flow Graph</h2>");
+    expect(html).toContain("exec-node-title");
+    expect(html).toContain("✅ alpha");
+    expect(html).toContain("map · 2");
+    expect(html).toContain("2 workers · 1 success · 1 failed");
+    expect(html).toContain("exec-worker-row worker-failed");
+    expect(html).toContain("⏩ joiner");
+    expect(html).toContain("sessions/alpha/20260605-000000/session.html");
+  });
+
   it("renders worker details as native details table and promotes child failures", () => {
     mkdirSync(path.join(ws.logsDir), { recursive: true });
     writeFileSync(path.join(ws.logsDir, "arguer_HYP-001.log"), "Stage: arguer/HYP-001 started at 2026-05-12 12:00:00\nDONE: exit=1 duration=10ms turns=1 tools=2 tokens_in=3 tokens_out=4 tokens_total=7 api_errors=0 retries=0 final_stop=error\n");
