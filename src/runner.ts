@@ -484,6 +484,7 @@ export class Runner {
           api_errors: apiErrors,
           retries,
           final_stop: finalStopReason,
+          session_file: result.sessionFile,
         });
 
         handler?.onDone(result);

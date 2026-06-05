@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   attachFileHandler,
+  attachExecutionLogHandler,
   enableJsonLog,
   logEvent,
   LogLevel,
@@ -115,6 +116,35 @@ describe("logger", () => {
     expect(parsed.tokens_cache_read).toBe(100);
     expect(parsed.tokens_cache_write).toBe(5);
     expect(parsed.tokens_total).toBe(118);
+  });
+
+  it("persists stage and engine events to execution jsonl", () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const dir = mkdtempSync(path.join(os.tmpdir(), "youngflow-logger-"));
+    const file = path.join(dir, "execution.jsonl");
+    attachExecutionLogHandler(file);
+
+    logEvent({
+      category: "stage",
+      event: "stage_start",
+      stage: "review/HYP-001",
+      iterate_file: "/tmp/HYP-001.yaml",
+      model: "zai/glm-5.1",
+      skills: ["audit"],
+      task: "review.md",
+      timeout: 1800,
+    });
+    logEvent({ category: "debug", event: "debug", source: "test", level: "info", message: "ignore" });
+
+    const lines = readFileSync(file, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed.event).toBe("stage_start");
+    expect(parsed.iterate_file).toBe("/tmp/HYP-001.yaml");
+    expect(parsed.model).toBe("zai/glm-5.1");
+    expect(parsed.skills).toEqual(["audit"]);
+    expect(parsed.ts).toBeTruthy();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("writes human-readable file logs", () => {

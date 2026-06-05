@@ -66,8 +66,10 @@ describe("flow report run history", () => {
     const reportPath = refresh(mapSpec, ws)!;
     const html = readFileSync(reportPath, "utf-8");
 
+    expect(html).toContain("<div class=\"stage-grid\">");
+    expect(html).toContain("<div class=\"stage-card-body\">");
     expect(html).toContain("<details class=\"worker-details\" open>");
-    expect(html).toContain("<table class=\"worker-table\">");
+    expect(html).toContain("<div class=\"worker-table-wrap\"><table class=\"worker-table\">");
     expect(html).toContain("<th scope=\"col\">Worker</th>");
     expect(html).toContain("This stage failed. Open log for details.");
     expect(html).toContain("worker-failed");

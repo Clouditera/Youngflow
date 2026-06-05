@@ -15,7 +15,7 @@ import { parseFlow } from "./spec.js";
 import { Orchestrator } from "./orchestrator.js";
 import { Workspace } from "./workspace.js";
 import * as report from "./report.js";
-import { setLevel, attachFileHandler, enableJsonLog, logEvent, logFlowMessage, LogLevel } from "./logger.js";
+import { setLevel, attachFileHandler, attachExecutionLogHandler, enableJsonLog, logEvent, logFlowMessage, LogLevel } from "./logger.js";
 
 declare const __dirname: string;
 
@@ -252,6 +252,7 @@ async function runFlow(
   });
 
   attachFileHandler(orch.workspace.flowLog);
+  attachExecutionLogHandler(orch.workspace.executionLogPath);
 
   const start = Date.now();
   const runMetadata: Record<string, any> = {

@@ -21,10 +21,10 @@ import {
   type FilterSpec,
   type FlowSpec,
   type StageSpec,
+  type TaskSpec,
   StageType,
   resolveAgent,
-} from "./spec.js";
-import { extractState, getByPathSafe, StateExtractionError } from "./state.js";
+} from "./spec.js";import { extractState, getByPathSafe, StateExtractionError } from "./state.js";
 import { Workspace } from "./workspace.js";
 import { logEvent, debug } from "./logger.js";
 
@@ -409,7 +409,7 @@ export class Orchestrator {
         return updates;
       }
 
-      logEvent({ category: "stage", event: "stage_start", stage: stage.id });
+      self.logStageStart(stage, stage.id);
       const startedAt = new Date().toISOString().slice(0, 19);
       const result = await self.executor.execute(stage);
       const updates: Record<string, any> = {
@@ -481,7 +481,7 @@ export class Orchestrator {
         return updates;
       }
 
-      logEvent({ category: "stage", event: "stage_start", stage: stage.id });
+      self.logStageStart(stage, stage.id);
       const startedAt = new Date().toISOString().slice(0, 19);
       const synthetic: StageResult = {
         stageId: stage.id,
@@ -577,6 +577,7 @@ export class Orchestrator {
       if (stage.type === StageType.PARALLEL) {
         const task = stage.tasks[stageConfig.task_index];
         const outputDir = path.join(self.workspace.root, task.outputSubdir);
+        self.logStageStart(task, workerKey);
         await sem.acquire();
         try {
           result = await self.executor.execute(task, {
@@ -589,6 +590,7 @@ export class Orchestrator {
         }
       } else {
         const outputDir = path.join(self.workspace.root, stage.id, label);
+        self.logStageStart(stage, workerKey, iterateFile);
         await sem.acquire();
         try {
           result = await self.executor.execute(stage, {
@@ -827,6 +829,19 @@ export class Orchestrator {
   private refreshReport(): void {
     report.refresh(this.spec, this.workspace);
     this.onReportRefresh?.();
+  }
+
+  private logStageStart(stage: StageSpec | TaskSpec, stageId: string, iterateFile?: string): void {
+    logEvent({
+      category: "stage",
+      event: "stage_start",
+      stage: stageId,
+      ...(iterateFile ? { iterate_file: iterateFile } : {}),
+      model: "model" in stage && stage.model ? stage.model : this.spec.defaultModel,
+      skills: stage.skills,
+      task: stage.task,
+      timeout: stage.timeout,
+    });
   }
 
   private resultDict(

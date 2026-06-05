@@ -26,6 +26,7 @@ const ACTIVE_ENGINE_ENTRIES = [
   "flow-report.html",
   "youngflow.log",
   "run.yaml",
+  "execution.jsonl",
 ];
 
 export class Workspace {
@@ -139,5 +140,9 @@ export class Workspace {
 
   get flowLog(): string {
     return path.join(this.engine, "youngflow.log");
+  }
+
+  get executionLogPath(): string {
+    return path.join(this.engine, "execution.jsonl");
   }
 }

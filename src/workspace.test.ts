@@ -58,9 +58,11 @@ describe("Workspace", () => {
     expect(yamlFiles).toHaveLength(2);
   });
 
-  it("flowLog path", () => {
+  it("flowLog and executionLog paths", () => {
     expect(ws.flowLog).toContain(".youngflow");
     expect(ws.flowLog).toContain("youngflow.log");
+    expect(ws.executionLogPath).toContain(".youngflow");
+    expect(ws.executionLogPath).toContain("execution.jsonl");
   });
 
   it("reportPath", () => {
@@ -73,6 +75,7 @@ describe("Workspace", () => {
     writeFileSync(ws.runMetadataPath, "run_id: old\n");
     writeFileSync(ws.reportPath, "<html>old</html>");
     writeFileSync(ws.flowLog, "old log");
+    writeFileSync(ws.executionLogPath, "{}\n");
     writeFileSync(path.join(ws.checkpointsDir, "stage.done.yaml"), "status: success\n");
     writeFileSync(path.join(ws.logsDir, "stage.log"), "DONE: exit=0 duration=1ms\n");
     writeFileSync(path.join(ws.sessionsDir, "session.jsonl"), "{}\n");
@@ -85,6 +88,7 @@ describe("Workspace", () => {
     expect(existsSync(path.join(archiveDir!, "run.yaml"))).toBe(true);
     expect(existsSync(path.join(archiveDir!, "flow-report.html"))).toBe(true);
     expect(existsSync(path.join(archiveDir!, "youngflow.log"))).toBe(true);
+    expect(existsSync(path.join(archiveDir!, "execution.jsonl"))).toBe(true);
     expect(existsSync(path.join(archiveDir!, "checkpoints", "stage.done.yaml"))).toBe(true);
     expect(existsSync(path.join(archiveDir!, "logs", "stage.log"))).toBe(true);
     expect(existsSync(path.join(archiveDir!, "sessions", "session.jsonl"))).toBe(true);

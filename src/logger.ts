@@ -38,6 +38,7 @@ const LEVEL_NAMES: Record<LogLevel, string> = {
 
 let globalLevel: LogLevel = LogLevel.INFO;
 let logFilePath: string | undefined;
+let executionLogPath: string | undefined;
 let jsonLogEnabled = false;
 
 const FILE_LEVEL: LogLevel = LogLevel.DEBUG;
@@ -51,6 +52,11 @@ export function attachFileHandler(filePath: string): void {
   logFilePath = filePath;
 }
 
+export function attachExecutionLogHandler(filePath: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  executionLogPath = filePath;
+}
+
 export function enableJsonLog(): void {
   jsonLogEnabled = true;
 }
@@ -58,6 +64,7 @@ export function enableJsonLog(): void {
 export function resetLoggerForTest(): void {
   globalLevel = LogLevel.INFO;
   logFilePath = undefined;
+  executionLogPath = undefined;
   jsonLogEnabled = false;
 }
 
@@ -129,6 +136,11 @@ export interface StageStartEvent {
   category: "stage";
   event: "stage_start";
   stage: string;
+  iterate_file?: string;
+  model?: string;
+  skills?: readonly string[];
+  task?: string;
+  timeout?: number;
 }
 
 export interface StageDoneEvent {
@@ -147,6 +159,7 @@ export interface StageDoneEvent {
   api_errors: number;
   retries: number;
   final_stop?: string;
+  session_file?: string;
 }
 
 export interface StageSkippedEvent {
@@ -318,6 +331,15 @@ export function logEvent(event: YoungFlowEvent): void {
     process.stderr.write(
       `${tsShort} [youngflow.${module}] ${LEVEL_NAMES[level]} ${text}\n`,
     );
+  }
+
+  // Execution log: structured event stream for reports.
+  if (executionLogPath && (event.category === "stage" || event.category === "engine")) {
+    try {
+      appendFileSync(executionLogPath, JSON.stringify({ ts, ...event }) + "\n", "utf-8");
+    } catch {
+      // best-effort
+    }
   }
 
   // File log: always human-readable text
