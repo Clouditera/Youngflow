@@ -303,6 +303,74 @@ describe("map stage filter", () => {
     expect(await runMapFilter("field: metadata.review_status\nmatch: pending\ninclude_missing: true")).toEqual(["missing", "pending"]);
     expect(await runMapFilter("field: metadata.review_status\nmatch: pending\ninclude_missing: false")).toEqual(["pending"]);
   });
+
+  async function runMapFilterWithFiles(
+    over: string,
+    filterYaml: string,
+    files: Record<string, string>,
+  ): Promise<string[]> {
+    const dir = path.join(os.tmpdir(), `youngflow-map-filter-extra-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    tmpDirs.push(dir);
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    mkdirSync(path.join(outDir, "findings"), { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(path.join(outDir, "findings", name), content);
+    }
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: review",
+      "    type: map",
+      "    skills: [test-skill]",
+      `    over: ${over}`,
+      "    concurrency: 1",
+      "    filter:",
+      ...filterYaml.split("\n").map((line) => `      ${line}`),
+    ].join("\n"));
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const executed: string[] = [];
+    (orch as any).executor = {
+      execute: async (_stage: any, options: any) => {
+        executed.push(path.parse(options.iterateFile).name);
+        return { stageId: "review", exitCode: 0, durationMs: 1, outputDir: options.outputDir };
+      },
+    };
+    await orch.run();
+    return executed.sort();
+  }
+
+  it("supports markdown frontmatter match and not_match", async () => {
+    const files = {
+      "pending.md": "---\nmetadata:\n  review_status: pending\n---\n# Pending\n",
+      "done.md": "---\nmetadata:\n  review_status: done\n---\n# Done\n",
+      "plain.md": "# No frontmatter\nmetadata:\n  review_status: pending\n",
+    };
+    expect(await runMapFilterWithFiles("findings/*.md", "field: metadata.review_status\nmatch: pending", files)).toEqual(["pending"]);
+    expect(await runMapFilterWithFiles("findings/*.md", "field: metadata.review_status\nnot_match: done", files)).toEqual(["pending"]);
+  });
+
+  it("supports markdown frontmatter include_missing", async () => {
+    expect(await runMapFilterWithFiles("findings/*.md", "field: metadata.review_status\nmatch: pending\ninclude_missing: true", {
+      "missing.md": "---\nmetadata: {}\n---\n# Missing\n",
+      "pending.md": "---\nmetadata:\n  review_status: pending\n---\n# Pending\n",
+    })).toEqual(["missing", "pending"]);
+  });
+
+  it("supports JSON object filtering", async () => {
+    expect(await runMapFilterWithFiles("findings/*.json", "field: metadata.review_status\nin: [pending, new]", {
+      "pending.json": JSON.stringify({ metadata: { review_status: "pending" } }),
+      "new.json": JSON.stringify({ metadata: { review_status: "new" } }),
+      "done.json": JSON.stringify({ metadata: { review_status: "done" } }),
+    })).toEqual(["new", "pending"]);
+  });
 });
 
 describe("flows/demo-join deterministic validation", () => {

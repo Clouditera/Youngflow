@@ -67,11 +67,7 @@ function filterMapFiles(
   for (const f of files) {
     let data: Record<string, unknown>;
     try {
-      const loaded = yaml.load(readFileSync(f, "utf-8"), { schema: yaml.JSON_SCHEMA });
-      if (typeof loaded !== "object" || loaded === null || Array.isArray(loaded)) {
-        throw new Error("not a YAML mapping");
-      }
-      data = loaded as Record<string, unknown>;
+      data = parseFilterData(f);
     } catch (e) {
       debug("orchestrator", "warning", "[%s] filter: skipping unparseable file %s: %s", stageId, f, e);
       skipped++;
@@ -119,6 +115,28 @@ function filterMapFiles(
   });
 
   return items;
+}
+
+function parseFilterData(filePath: string): Record<string, unknown> {
+  const content = readFileSync(filePath, "utf-8");
+  let loaded: unknown;
+
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".json") {
+    loaded = JSON.parse(content);
+  } else if (ext === ".md" || ext === ".markdown") {
+    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    if (!frontmatter) throw new Error("markdown frontmatter not found");
+    loaded = yaml.load(frontmatter[1], { schema: yaml.JSON_SCHEMA });
+  } else {
+    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    loaded = yaml.load(frontmatter ? frontmatter[1] : content, { schema: yaml.JSON_SCHEMA });
+  }
+
+  if (typeof loaded !== "object" || loaded === null || Array.isArray(loaded)) {
+    throw new Error("not a YAML/JSON mapping");
+  }
+  return loaded as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
