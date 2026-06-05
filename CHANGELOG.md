@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.11 - 2026-06-05
+
+### Added
+- Map stage `filter` now supports Markdown frontmatter (`.md` / `.markdown`) and JSON (`.json`) files in addition to YAML.
+- Markdown files without frontmatter are skipped with a warning when used with map filters.
+
 ## 0.2.10 - 2026-06-05
 
 ### Added
