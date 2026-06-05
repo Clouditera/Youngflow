@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.10 - 2026-06-05
+
+### Added
+- Added structured `.youngflow/execution.jsonl` persistence for stage/engine events, including per-worker `iterate_file` context and `stage_done.session_file`; active execution logs are archived by `--continue`.
+- Added Execution Timeline in `flow-report.html`, replacing the static Flow Graph when `execution.jsonl` exists. It shows actual per-instance execution order, repeated loop nodes, fork/join structure, map worker details, and session links.
+- Added Run History columns: Stages, Tokens, Tools, Failures, and Model.
+
+### Changed
+- Stage Details now use a horizontal grid layout with bounded, scrollable worker tables; failed worker details open by default.
+- Older runs without `execution.jsonl` continue to fall back to the previous static Flow Graph.
+
+### Fixed
+- Interrupted runs now write `status: interrupted`, `ended_at`, and `duration_ms` on SIGINT/SIGTERM.
+- Running `run.yaml` now updates `duration_ms` continuously during report refresh.
+- `--continue` now repairs stale active `status: running` metadata to `interrupted` before archiving.
+- Archived stale `running` runs display as `interrupted` in Run History.
+
 ## 0.2.9 - 2026-06-04
 
 ### Changed
