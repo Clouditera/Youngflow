@@ -6,9 +6,7 @@
  */
 
 import { setMaxListeners } from "node:events";
-import { readFileSync } from "node:fs";
 import path from "node:path";
-import yaml from "js-yaml";
 import { Annotation, StateGraph, Send, END, START } from "@langchain/langgraph";
 import { Checkpoint } from "./checkpoint.js";
 import { compare, parseLiteral } from "./condition.js";
@@ -18,13 +16,14 @@ import { Runner, loadEnvFile } from "./runner.js";
 import { resolveModelConfig, type ModelConfig } from "./model-config.js";
 import * as report from "./report.js";
 import {
-  type FilterSpec,
   type FlowSpec,
   type StageSpec,
   type TaskSpec,
   StageType,
   resolveAgent,
-} from "./spec.js";import { extractState, getByPathSafe, StateExtractionError } from "./state.js";
+} from "./spec.js";
+import { extractState, StateExtractionError } from "./state.js";
+import { selectFiles } from "./map-filter.js";
 import { Workspace } from "./workspace.js";
 import { logEvent, debug } from "./logger.js";
 
@@ -57,86 +56,19 @@ class Semaphore {
 
 function filterMapFiles(
   files: string[],
-  filter: FilterSpec,
+  filter: NonNullable<StageSpec["filter"]>,
   stageId: string,
 ): Array<Record<string, any>> {
-  const items: Array<Record<string, any>> = [];
-  let passed = 0;
-  let skipped = 0;
-
-  for (const f of files) {
-    let data: Record<string, unknown>;
-    try {
-      data = parseFilterData(f);
-    } catch (e) {
-      debug("orchestrator", "warning", "[%s] filter: skipping unparseable file %s: %s", stageId, f, e);
-      skipped++;
-      continue;
-    }
-
-    const value = getByPathSafe(data, filter.field);
-    if (value === undefined) {
-      if (filter.includeMissing) {
-        items.push({ _iterate_file: f });
-        passed++;
-      } else {
-        skipped++;
-      }
-      continue;
-    }
-
-    const strValue = String(value);
-    let include = false;
-    if (filter.match !== undefined) {
-      include = strValue === filter.match;
-    } else if (filter.notMatch !== undefined) {
-      include = strValue !== filter.notMatch;
-    } else if (filter.in !== undefined) {
-      include = filter.in.includes(strValue);
-    } else if (filter.notIn !== undefined) {
-      include = !filter.notIn.includes(strValue);
-    }
-
-    if (include) {
-      items.push({ _iterate_file: f });
-      passed++;
-    } else {
-      skipped++;
-    }
-  }
-
+  const selected = selectFiles(files, filter, stageId);
   logEvent({
     category: "stage",
     event: "filter",
     stage: stageId,
     glob_total: files.length,
-    filter_passed: passed,
-    filter_skipped: skipped,
+    filter_passed: selected.length,
+    filter_skipped: files.length - selected.length,
   });
-
-  return items;
-}
-
-function parseFilterData(filePath: string): Record<string, unknown> {
-  const content = readFileSync(filePath, "utf-8");
-  let loaded: unknown;
-
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".json") {
-    loaded = JSON.parse(content);
-  } else if (ext === ".md" || ext === ".markdown") {
-    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-    if (!frontmatter) throw new Error("markdown frontmatter not found");
-    loaded = yaml.load(frontmatter[1], { schema: yaml.JSON_SCHEMA });
-  } else {
-    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-    loaded = yaml.load(frontmatter ? frontmatter[1] : content, { schema: yaml.JSON_SCHEMA });
-  }
-
-  if (typeof loaded !== "object" || loaded === null || Array.isArray(loaded)) {
-    throw new Error("not a YAML/JSON mapping");
-  }
-  return loaded as Record<string, unknown>;
+  return selected.map((f) => ({ _iterate_file: f }));
 }
 
 // ---------------------------------------------------------------------------
@@ -156,9 +88,16 @@ const FlowStateAnnotation = Annotation.Root({
     reducer: (a, b) => ({ ...a, ...b }),
     default: () => ({}),
   }),
-  _route_targets: Annotation<string[]>({
-    reducer: (_a, b) => b,
-    default: () => [],
+  _route_targets: Annotation<Record<string, string[]>>({
+    reducer: (a, b) => {
+      const out = { ...a };
+      for (const [stageId, targets] of Object.entries(b ?? {})) {
+        if (targets.length === 0) delete out[stageId];
+        else out[stageId] = targets;
+      }
+      return out;
+    },
+    default: () => ({}),
   }),
   fork_context: Annotation<{ origin: string; expected: string[]; done: string[] } | undefined>({
     reducer: (a, b) => {
@@ -283,7 +222,7 @@ export class Orchestrator {
       extracted: {},
       stage_results: [],
       route_counts: {},
-      _route_targets: [],
+      _route_targets: {},
       fork_context: undefined,
       _iterate_file: "",
       _stage_config: {},
@@ -363,7 +302,7 @@ export class Orchestrator {
           }
         }
         targets.add(END);
-        builder.addConditionalEdges(exitNode, this.makeDispatcher(), [
+        builder.addConditionalEdges(exitNode, this.makeDispatcher(stage), [
           ...targets,
         ]);
       } else {
@@ -389,15 +328,15 @@ export class Orchestrator {
     return `${stage.id}_worker`;
   }
 
-  private makeDispatcher() {
+  private makeDispatcher(stage: StageSpec) {
     return (state: FlowState): string | Send[] => {
-      const targets = dedupe((state._route_targets ?? []).filter((t) => this.stageMap.has(t)));
+      const targets = dedupe((state._route_targets?.[stage.id] ?? []).filter((t) => this.stageMap.has(t)));
       if (targets.length === 0) return END;
       if (targets.length === 1) return this.entryNode(this.stageMap.get(targets[0])!);
       const forkContext = { origin: targets.join("+"), expected: targets, done: [] };
       return targets.map((target) => new Send(this.entryNode(this.stageMap.get(target)!), {
         ...state,
-        _route_targets: [],
+        _route_targets: { [stage.id]: [] },
         fork_context: forkContext,
       }));
     };
@@ -422,7 +361,7 @@ export class Orchestrator {
         };
         Object.assign(updates, self.forkDoneUpdate(stage.id, state));
         if (stage.routes.length > 0) {
-          updates._route_targets = self.resumeRouteDecision(stage, state.extracted ?? {});
+          updates._route_targets = { [stage.id]: self.resumeRouteDecision(stage, state.extracted ?? {}) };
         }
         return updates;
       }
@@ -458,7 +397,7 @@ export class Orchestrator {
           state.route_counts ?? {},
         );
         updates.route_counts = decision.routeCounts;
-        updates._route_targets = decision.targets;
+        updates._route_targets = { [stage.id]: decision.targets };
       }
 
       return updates;
@@ -482,7 +421,7 @@ export class Orchestrator {
       if (waiting) {
         debug("orchestrator", "info", "[%s] join waiting for branches: expected=%s done=%s",
           stage.id, expected.join(","), done.join(","));
-        return { _route_targets: [] };
+        return { _route_targets: { [stage.id]: [] } };
       }
 
       if (self.resume && self.checkpoint.isDone(stage.id)) {
@@ -494,7 +433,7 @@ export class Orchestrator {
           fork_context: undefined,
         };
         if (stage.routes.length > 0) {
-          updates._route_targets = self.resumeRouteDecision(stage, state.extracted ?? {});
+          updates._route_targets = { [stage.id]: self.resumeRouteDecision(stage, state.extracted ?? {}) };
         }
         return updates;
       }
@@ -517,7 +456,7 @@ export class Orchestrator {
       if (stage.routes.length > 0) {
         const decision = self.evaluateRoutes(stage, updates.extracted, state.route_counts ?? {});
         updates.route_counts = decision.routeCounts;
-        updates._route_targets = decision.targets;
+        updates._route_targets = { [stage.id]: decision.targets };
       }
       updates.fork_context = undefined;
       return updates;
@@ -643,7 +582,7 @@ export class Orchestrator {
         };
         Object.assign(updates, self.forkDoneUpdate(stage.id, state));
         if (stage.routes.length > 0) {
-          updates._route_targets = self.resumeRouteDecision(stage, state.extracted ?? {});
+          updates._route_targets = { [stage.id]: self.resumeRouteDecision(stage, state.extracted ?? {}) };
         }
         return updates;
       }
@@ -687,7 +626,7 @@ export class Orchestrator {
           state.route_counts ?? {},
         );
         updates.route_counts = decision.routeCounts;
-        updates._route_targets = decision.targets;
+        updates._route_targets = { [stage.id]: decision.targets };
       }
 
       return updates;

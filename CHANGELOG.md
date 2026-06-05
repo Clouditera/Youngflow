@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.12 - 2026-06-05
+
+### Fixed
+- State `glob` rules can now apply the same file `filter` semantics as map stages before counting matches, preventing routes from dispatching map stages whose filters would select zero items.
+- Concurrent route decisions are now stage-scoped instead of sharing a last-write-wins `_route_targets` field, preserving independent downstream routes after fan-out branches complete in parallel.
+
 ## 0.2.11 - 2026-06-05
 
 ### Added

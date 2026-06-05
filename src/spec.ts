@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import Ajv from "ajv";
 import { debug } from "./logger.js";
+import { parseFilterSpec, type FilterSpec } from "./map-filter.js";
 
 declare const __dirname: string;
 
@@ -60,15 +61,6 @@ export interface RouteSpec {
   readonly to: string;
   readonly when: string | undefined;
   readonly maxLoops: number | undefined;
-}
-
-export interface FilterSpec {
-  readonly field: string;
-  readonly match: string | undefined;
-  readonly notMatch: string | undefined;
-  readonly in: readonly string[] | undefined;
-  readonly notIn: readonly string[] | undefined;
-  readonly includeMissing: boolean;
 }
 
 export interface StageSpec {
@@ -231,19 +223,8 @@ function parseStage(raw: Record<string, any>): StageSpec {
     routes: (raw.routes ?? []).map(parseRoute),
     tasks: (raw.tasks ?? []).map(parseTask),
     over: raw.over ?? undefined,
-    filter: raw.filter ? parseFilter(raw.filter) : undefined,
+    filter: parseFilterSpec(raw.filter),
     stateExtract,
-  };
-}
-
-function parseFilter(raw: Record<string, any>): FilterSpec {
-  return {
-    field: raw.field,
-    match: raw.match ?? undefined,
-    notMatch: raw.not_match ?? undefined,
-    in: raw.in ? [...raw.in] : undefined,
-    notIn: raw.not_in ? [...raw.not_in] : undefined,
-    includeMissing: raw.include_missing ?? false,
   };
 }
 

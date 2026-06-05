@@ -258,7 +258,7 @@ stages:
 - id: security-analyzer
   type: map
   over: "feature_groups/GROUP-*.yaml"   # glob（相对 output_dir）
-  filter:                                # 可选：按 YAML 字段过滤 map item
+  filter:                                # 可选：按 YAML/JSON/Markdown frontmatter 字段过滤 map item
     field: "metadata.review_status"      # dotpath
     match: "pending"                     # match / not_match / in / not_in 四选一
     include_missing: true                # 字段缺失时也纳入迭代
@@ -290,7 +290,7 @@ stages:
 | `env` | object | — | 自定义环境变量（与 defaults.env 合并，stage 优先）|
 | `concurrency` | int | max_parallel | map 并发上限 |
 | `over` | string | — | map glob 模式（相对 output_dir） |
-| `filter` | object | — | map item 过滤；支持 `field` + `match` / `not_match` / `in` / `not_in` + `include_missing` |
+| `filter` | object | — | map item 过滤；支持 YAML、JSON、Markdown frontmatter 的 `field` + `match` / `not_match` / `in` / `not_in` + `include_missing` |
 | `state` | object | — | 状态提取规则（见 [Routes 与 State](#routes-与-state)）|
 | `routes` | list | — | 条件路由（见 [Routes 与 State](#routes-与-state)）|
 | `tasks` | list | — | parallel 子任务列表 |
@@ -378,9 +378,12 @@ state:
     keys_of: project_type
     where: is_type == true
 
-  # 3) glob: 统计匹配的文件数
+  # 3) glob: 统计匹配的文件数；可选 filter 会先筛选文件内容再计数
   feature_count:
     glob: perspective_*/features/FEAT-*.yaml
+    filter:
+      field: metadata.review_status
+      match: pending
 ```
 
 所有路径相对 `output_dir`。
@@ -388,7 +391,7 @@ state:
 #### 严格语义
 
 - **`file` 规则是硬契约**：文件不存在、字段不存在、YAML 解析失败 → 立即中止 flow，stage 标记为失败（exit_code=1），`extracted[stage_id].state_error` 记录失败原因。这是对前置 stage "必须产出这个文件/字段" 的显式声明，违约即失败。
-- **`glob` 规则宽松**：0 匹配是合法答案。如果你想"检查文件是否存在再决定"，用 glob：
+- **`glob` 规则宽松**：0 匹配是合法答案。带 `filter` 时，只有通过 YAML/JSON/Markdown frontmatter 字段过滤的文件会被计数。如果你想"检查文件是否存在再决定"，用 glob：
 
 ```yaml
 state:

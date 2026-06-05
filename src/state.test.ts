@@ -139,6 +139,25 @@ describe("extractState", () => {
     teardown();
   });
 
+  it("applies glob filter before counting matches", () => {
+    setup();
+    const subdir = path.join(tmpDir, "hypotheses");
+    mkdirSync(subdir);
+    writeFileSync(path.join(subdir, "confirmed.md"), "---\nstatus: confirmed-risk\n---\n# confirmed\n");
+    writeFileSync(path.join(subdir, "pending.md"), "---\nstatus: pending\n---\n# pending\n");
+    writeFileSync(path.join(subdir, "plain.md"), "# no frontmatter\n");
+
+    const state = extractState({
+      confirmed_count: {
+        glob: "hypotheses/*.md",
+        filter: { field: "status", match: "confirmed-risk" },
+      },
+    }, tmpDir);
+
+    expect(state.confirmed_count).toBe(1);
+    teardown();
+  });
+
   // ---- errors ----
 
   it("throws for rule with no data source", () => {

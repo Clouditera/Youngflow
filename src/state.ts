@@ -16,6 +16,7 @@ const { globSync } = fg;
 import yaml from "js-yaml";
 import { evaluateExpr } from "./condition.js";
 import { debug } from "./logger.js";
+import { parseFilterSpec, selectFiles } from "./map-filter.js";
 
 export class StateExtractionError extends Error {
   key: string;
@@ -47,7 +48,7 @@ export function extractState(
     }
 
     if ("glob" in rule) {
-      state[key] = evalGlob(rule as Record<string, string>, baseDir);
+      state[key] = evalGlob(rule, baseDir);
     } else if ("file" in rule) {
       try {
         state[key] = evalFile(rule as Record<string, string>, baseDir);
@@ -72,9 +73,11 @@ export function extractState(
   return state;
 }
 
-function evalGlob(rule: Record<string, string>, baseDir: string): number {
-  const pattern = rule.glob;
-  return globSync(pattern, { cwd: baseDir }).length;
+function evalGlob(rule: Record<string, unknown>, baseDir: string): number {
+  const pattern = String(rule.glob ?? "");
+  const files = globSync(pattern, { cwd: baseDir, absolute: true }).sort();
+  const filter = parseFilterSpec(rule.filter as Record<string, any> | undefined);
+  return selectFiles(files, filter, "state").length;
 }
 
 function evalFile(rule: Record<string, string>, baseDir: string): unknown {

@@ -223,6 +223,116 @@ describe("multi-target routing + join integration", () => {
     expect(executed).toContain("report");
     expect(executed).not.toContain("research");
   });
+
+  it("uses filtered glob counts for route selection", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-route-filter-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    tmpDirs.push(dir);
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    mkdirSync(path.join(outDir, "hypotheses"), { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    writeFileSync(path.join(outDir, "hypotheses", "HYP-001.md"), "---\nstatus: pending\n---\n# pending\n");
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: investigate",
+      "    skills: [test-skill]",
+      "    state:",
+      "      confirmed_count:",
+      "        glob: hypotheses/HYP-*.md",
+      "        filter:",
+      "          field: status",
+      "          match: confirmed-risk",
+      "    routes:",
+      "      - to: verify_affirm",
+      "        when: investigate.confirmed_count > 0",
+      "      - to: report",
+      "  - id: verify_affirm",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over: hypotheses/HYP-*.md",
+      "    filter:",
+      "      field: status",
+      "      match: confirmed-risk",
+      "  - id: report",
+      "    skills: [test-skill]",
+    ].join("\n"));
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const executed: string[] = [];
+    (orch as any).executor = {
+      execute: async (stage: any) => {
+        executed.push(stage.id);
+        return { stageId: stage.id, exitCode: 0, durationMs: 1, outputDir: outDir };
+      },
+    };
+
+    await orch.run();
+
+    expect(executed).toEqual(["investigate", "report"]);
+  });
+
+  it("preserves concurrent route targets per source stage", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-concurrent-routes-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    tmpDirs.push(dir);
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: start",
+      "    skills: [test-skill]",
+      "    state:",
+      "      route_left:",
+      "        glob: left.flag",
+      "      route_right:",
+      "        glob: right.flag",
+      "    routes:",
+      "      - to: left",
+      "        when: start.route_left > 0",
+      "      - to: right",
+      "        when: start.route_right > 0",
+      "  - id: left",
+      "    skills: [test-skill]",
+      "    routes:",
+      "      - to: final_left",
+      "  - id: right",
+      "    skills: [test-skill]",
+      "    routes:",
+      "      - to: final_right",
+      "  - id: final_left",
+      "    skills: [test-skill]",
+      "  - id: final_right",
+      "    skills: [test-skill]",
+    ].join("\n"));
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(path.join(outDir, "left.flag"), "1\n");
+    writeFileSync(path.join(outDir, "right.flag"), "1\n");
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const executed: string[] = [];
+    (orch as any).executor = {
+      execute: async (stage: any) => {
+        executed.push(stage.id);
+        return { stageId: stage.id, exitCode: 0, durationMs: 1, outputDir: outDir };
+      },
+    };
+
+    await orch.run();
+
+    expect(executed).toEqual(expect.arrayContaining(["left", "right", "final_left", "final_right"]));
+  });
 });
 
 describe("map stage filter", () => {

@@ -175,34 +175,7 @@ $defs:
         type: string
         description: Glob 模式（相对于 output_dir）
       filter:
-        type: object
-        description: Filter map items by YAML field value (map stages only)
-        properties:
-          field:
-            type: string
-            description: Dotpath to YAML field (e.g. "metadata.review_status")
-          match:
-            type: string
-            description: Include files where field equals this value
-          not_match:
-            type: string
-            description: Include files where field does not equal this value
-          in:
-            type: array
-            items:
-              type: string
-            description: Include files where field value is in this list
-          not_in:
-            type: array
-            items:
-              type: string
-            description: Include files where field value is not in this list
-          include_missing:
-            type: boolean
-            default: false
-            description: Include files where field does not exist
-        required: [field]
-        additionalProperties: false
+        $ref: "#/$defs/filter"
       concurrency:
         type: integer
         minimum: 1
@@ -232,8 +205,41 @@ $defs:
             glob:
               type: string
               description: glob 模式（相对于 output_dir），返回匹配数
+            filter:
+              $ref: "#/$defs/filter"
+              description: Optional file content filter applied before counting glob matches
           additionalProperties: false
 
+    additionalProperties: false
+
+  filter:
+    type: object
+    description: Filter files by YAML/JSON/Markdown-frontmatter field value
+    properties:
+      field:
+        type: string
+        description: Dotpath to field (e.g. "metadata.review_status")
+      match:
+        type: string
+        description: Include files where field equals this value
+      not_match:
+        type: string
+        description: Include files where field does not equal this value
+      in:
+        type: array
+        items:
+          type: string
+        description: Include files where field value is in this list
+      not_in:
+        type: array
+        items:
+          type: string
+        description: Include files where field value is not in this list
+      include_missing:
+        type: boolean
+        default: false
+        description: Include files where field does not exist
+    required: [field]
     additionalProperties: false
 
   route:
