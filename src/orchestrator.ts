@@ -194,6 +194,7 @@ export class Orchestrator {
   private flowTimedOut = false;
   private flowTimeoutTimer?: ReturnType<typeof setTimeout>;
   private flowAbortController?: AbortController;
+  private onReportRefresh?: () => void;
 
   constructor(
     spec: FlowSpec,
@@ -205,12 +206,14 @@ export class Orchestrator {
       maxParallel?: number;
       traceEvents?: boolean;
       recursionLimit?: number;
+      onReportRefresh?: () => void;
     } = {},
   ) {
     this.spec = spec;
     this.flowInputs = flowInputs;
     this.resume = opts.resume ?? false;
     this.maxParallel = opts.maxParallel ?? spec.defaultMaxParallel;
+    this.onReportRefresh = opts.onReportRefresh;
 
     this.workspace = new Workspace(opts.outputDir ?? opts.workDir ?? ".");
     this.workspace.setup();
@@ -823,6 +826,7 @@ export class Orchestrator {
 
   private refreshReport(): void {
     report.refresh(this.spec, this.workspace);
+    this.onReportRefresh?.();
   }
 
   private resultDict(

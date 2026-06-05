@@ -48,6 +48,12 @@ interface RunHistoryEntry {
   status: string;
   mode: string;
   duration_ms: number;
+  stages_total?: number;
+  stages_completed?: number;
+  stages_failed?: number;
+  tools?: number;
+  tokens_total?: number;
+  model?: string;
   report_path?: string;
   log_path?: string;
   sessions_dir?: string;
@@ -57,9 +63,9 @@ function emptyRun(id: string, dir: string, current: boolean): RunHistoryEntry {
   return { id, dir, current, started_at: "", ended_at: "", status: "unknown", mode: current ? "current" : "archived", duration_ms: 0 };
 }
 
-export function collectRunHistory(workspace: Workspace): RunHistoryEntry[] {
+export function collectRunHistory(workspace: Workspace, currentStages: StageReport[] = []): RunHistoryEntry[] {
   const entries: RunHistoryEntry[] = [];
-  entries.push(runEntry(workspace.engineDir, "Current run", true));
+  entries.push(applyCurrentStageMetrics(runEntry(workspace.engineDir, "Current run", true), currentStages));
 
   if (existsSync(workspace.runsDir)) {
     const dirs = globSync("*", { cwd: workspace.runsDir, onlyDirectories: true }).sort().reverse();
@@ -79,8 +85,15 @@ function runEntry(dir: string, id: string, current: boolean): RunHistoryEntry {
         entry.started_at = String(meta.started_at ?? "");
         entry.ended_at = String(meta.ended_at ?? "");
         entry.status = String(meta.status ?? entry.status);
+        if (!current && entry.status === "running") entry.status = "interrupted";
         entry.mode = String(meta.mode ?? entry.mode);
         entry.duration_ms = Number(meta.duration_ms ?? 0);
+        entry.model = meta.model == null ? undefined : String(meta.model);
+        entry.stages_total = numberOrUndefined(meta.stages_total);
+        entry.stages_completed = numberOrUndefined(meta.stages_completed);
+        entry.stages_failed = numberOrUndefined(meta.stages_failed);
+        entry.tools = numberOrUndefined(meta.tools);
+        entry.tokens_total = numberOrUndefined(meta.tokens_total);
       }
     } catch {
       // malformed metadata must not break report rendering
@@ -92,9 +105,61 @@ function runEntry(dir: string, id: string, current: boolean): RunHistoryEntry {
   if (existsSync(reportPath)) entry.report_path = reportPath;
   if (existsSync(logPath)) entry.log_path = logPath;
   if (existsSync(sessionsDir)) entry.sessions_dir = sessionsDir;
+  applyArchivedLogMetrics(entry);
   return entry;
 }
 
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function applyCurrentStageMetrics(entry: RunHistoryEntry, stages: StageReport[]): RunHistoryEntry {
+  if (stages.length === 0) return entry;
+  entry.stages_total ??= stages.length;
+  entry.stages_completed ??= stages.filter((s) => s.status === "success").length;
+  entry.stages_failed ??= stages.filter((s) => s.status === "failed").length;
+  entry.tools ??= stages.reduce((sum, s) => sum + s.tools, 0);
+  entry.tokens_total ??= stages.reduce((sum, s) => sum + s.tokens_total, 0);
+  return entry;
+}
+
+function applyArchivedLogMetrics(entry: RunHistoryEntry): void {
+  const logsDir = path.join(entry.dir, "logs");
+  if (!existsSync(logsDir)) return;
+  const logs = globSync("*.log", { cwd: logsDir, absolute: true }).sort();
+  if (logs.length === 0) return;
+
+  let completed = 0;
+  let failed = 0;
+  let tools = 0;
+  let tokensTotal = 0;
+  for (const logFile of logs) {
+    const content = readFileSync(logFile, "utf-8");
+    const doneRe = /DONE: exit=(\d+) duration=(\d+)ms/g;
+    let match: RegExpExecArray | null;
+    let sawDone = false;
+    let logFailed = false;
+    while ((match = doneRe.exec(content)) !== null) {
+      sawDone = true;
+      if (parseInt(match[1]) !== 0) logFailed = true;
+    }
+    if (!sawDone) continue;
+    if (logFailed) failed++;
+    else completed++;
+    tools += sumAll(/tools=(\d+)/g, content);
+    tokensTotal += sumAll(/tokens_total=(\d+)/g, content);
+  }
+
+  const total = completed + failed;
+  if (total > 0) {
+    entry.stages_completed ??= completed;
+    entry.stages_failed ??= failed;
+    entry.stages_total ??= total;
+  }
+  if (tools > 0) entry.tools ??= tools;
+  if (tokensTotal > 0) entry.tokens_total ??= tokensTotal;
+}
 
 function emptyReport(id: string): StageReport {
   return {
@@ -289,7 +354,7 @@ export function refresh(
 ): string | undefined {
   try {
     const stages = collectStageReports(spec, workspace);
-    const history = collectRunHistory(workspace);
+    const history = collectRunHistory(workspace, stages);
     return renderHtml(stages, history, workspace.root, workspace.reportPath);
   } catch (e) {
     debug("report", "debug", "Report refresh failed: %s", e);
@@ -442,9 +507,25 @@ function renderRunHistory(history: RunHistoryEntry[], reportPath: string): strin
     const logLink = r.log_path ? `<a href="${esc(rel(r.log_path, base))}" aria-label="Open log for ${esc(r.id)}">Log</a>` : "";
     const sessionsLink = r.sessions_dir ? `<a href="${esc(rel(r.sessions_dir, base))}" aria-label="Open sessions for ${esc(r.id)}">Sessions</a>` : "";
     const actions = [reportLink, logLink, sessionsLink].filter(Boolean).join(" ");
-    return `<tr${cls}><td>${esc(r.current ? "Current" : r.id)}</td><td class="timestamp">${esc(fmtDate(r.started_at || r.id))}</td><td>${esc(r.mode)}</td><td>${statusPill(r.status)}</td><td class="num">${fmt(r.duration_ms)}</td><td><span class="run-actions">${actions}</span></td></tr>`;
+    return `<tr${cls}><td>${esc(r.current ? "Current" : r.id)}</td><td class="timestamp">${esc(fmtDate(r.started_at || r.id))}</td><td>${esc(r.mode)}</td><td>${statusPill(r.status)}</td><td class="num">${fmt(r.duration_ms)}</td><td class="num">${esc(fmtStages(r))}</td><td class="num">${esc(fmtCompactNumber(r.tokens_total))}</td><td class="num">${esc(fmtCompactNumber(r.tools))}</td><td class="num">${esc(fmtOptionalNumber(r.stages_failed))}</td><td>${esc(r.model ?? "—")}</td><td><span class="run-actions">${actions}</span></td></tr>`;
   }).join("");
-  return `<section class="section-card run-history"><div class="section-header"><h2 class="section-title">Run History</h2><span class="section-hint">Current run plus archived .youngflow/runs entries</span></div><table class="run-ledger"><thead><tr><th scope="col">Run</th><th scope="col">Started</th><th scope="col">Mode</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Open</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+  return `<section class="section-card run-history"><div class="section-header"><h2 class="section-title">Run History</h2><span class="section-hint">Current run plus archived .youngflow/runs entries</span></div><table class="run-ledger"><thead><tr><th scope="col">Run</th><th scope="col">Started</th><th scope="col">Mode</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Stages</th><th scope="col">Tokens</th><th scope="col">Tools</th><th scope="col">Failures</th><th scope="col">Model</th><th scope="col">Open</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
+function fmtStages(entry: RunHistoryEntry): string {
+  if (entry.stages_completed == null || entry.stages_total == null) return "—";
+  return `${entry.stages_completed}/${entry.stages_total}`;
+}
+
+function fmtOptionalNumber(value: number | undefined): string {
+  return value == null ? "—" : value.toLocaleString();
+}
+
+function fmtCompactNumber(value: number | undefined): string {
+  if (value == null) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`;
+  return value.toLocaleString();
 }
 
 function statusPill(status: string): string {

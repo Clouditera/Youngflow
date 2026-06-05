@@ -225,6 +225,7 @@ async function runFlow(
   if (continueMode) {
     const preWorkspace = new Workspace(outputDir);
     if (hasActiveRun(outputDir)) {
+      markActiveRunInterrupted(preWorkspace);
       preWorkspace.archiveActiveRun(nextArchiveRunId(preWorkspace));
     }
   } else if (!opts.resume && hasActiveRun(outputDir)) {
@@ -239,6 +240,7 @@ async function runFlow(
     process.exit(1);
   }
 
+  let refreshRunningMetadata = (): void => {};
   const orch = new Orchestrator(spec, flowInputs, {
     workDir,
     outputDir,
@@ -246,6 +248,7 @@ async function runFlow(
     maxParallel: opts.maxParallel,
     recursionLimit: opts.recursionLimit,
     traceEvents: opts.traceEvents,
+    onReportRefresh: () => refreshRunningMetadata(),
   });
 
   attachFileHandler(orch.workspace.flowLog);
@@ -264,6 +267,34 @@ async function runFlow(
     status: "running",
   };
   writeRunMetadata(orch.workspace.runMetadataPath, runMetadata);
+
+  let runStatus = "running";
+  const runningMetadata = () => ({
+    ...runMetadata,
+    duration_ms: Date.now() - start,
+    status: runStatus,
+  });
+  refreshRunningMetadata = () => {
+    if (runStatus !== "running") return;
+    writeRunMetadata(orch.workspace.runMetadataPath, runningMetadata());
+  };
+  const writeInterruptedMetadata = (): void => {
+    runStatus = "interrupted";
+    writeRunMetadata(orch.workspace.runMetadataPath, {
+      ...runMetadata,
+      ended_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+      duration_ms: Date.now() - start,
+      status: "interrupted",
+    });
+  };
+  const handleSignal = (signal: NodeJS.Signals): void => {
+    writeInterruptedMetadata();
+    process.off("SIGINT", handleSignal);
+    process.off("SIGTERM", handleSignal);
+    process.kill(process.pid, signal);
+  };
+  process.on("SIGINT", handleSignal);
+  process.on("SIGTERM", handleSignal);
 
   logEvent({
     category: "engine",
@@ -298,6 +329,9 @@ async function runFlow(
   try {
     result = await orch.run();
   } catch (e) {
+    process.off("SIGINT", handleSignal);
+    process.off("SIGTERM", handleSignal);
+    runStatus = "failed";
     const durationMs = Date.now() - start;
     writeRunMetadata(orch.workspace.runMetadataPath, {
       ...runMetadata,
@@ -328,11 +362,14 @@ async function runFlow(
     stages_failed: stagesFailed,
   });
 
+  process.off("SIGINT", handleSignal);
+  process.off("SIGTERM", handleSignal);
+  runStatus = stagesFailed > 0 ? "failed" : "success";
   writeRunMetadata(orch.workspace.runMetadataPath, {
     ...runMetadata,
     ended_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
     duration_ms: durationMs,
-    status: stagesFailed > 0 ? "failed" : "success",
+    status: runStatus,
     stages_total: result.stageResults.length,
     stages_completed: stagesCompleted,
     stages_failed: stagesFailed,
@@ -430,6 +467,28 @@ export function hasActiveRun(outputDir: string): boolean {
     if (existsSync(p) && fg.globSync("**/*", { cwd: p, dot: true }).length > 0) return true;
   }
   return false;
+}
+
+function markActiveRunInterrupted(workspace: Workspace): void {
+  const metaPath = workspace.runMetadataPath;
+  if (!existsSync(metaPath)) return;
+  try {
+    const meta = yaml.load(readFileSync(metaPath, "utf-8")) as Record<string, any>;
+    if (!meta || typeof meta !== "object" || meta.status !== "running") return;
+
+    const startedAt = typeof meta.started_at === "string" ? Date.parse(meta.started_at) : NaN;
+    const durationMs = Number.isFinite(startedAt)
+      ? Math.max(Date.now() - startedAt, Number(meta.duration_ms ?? 0))
+      : Number(meta.duration_ms ?? 0);
+    writeRunMetadata(metaPath, {
+      ...meta,
+      ended_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+      duration_ms: durationMs,
+      status: "interrupted",
+    });
+  } catch {
+    // stale metadata repair must not block --continue archiving
+  }
 }
 
 export function writeRunMetadata(filePath: string, metadata: Record<string, any>): void {

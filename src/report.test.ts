@@ -24,10 +24,13 @@ describe("flow report run history", () => {
   afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
   it("renders current and archived run history links", () => {
-    writeFileSync(ws.runMetadataPath, "run_id: current\nmode: continue\nstatus: success\nstarted_at: '2026-05-12T12:00:00Z'\nduration_ms: 1000\n");
+    writeFileSync(ws.runMetadataPath, "run_id: current\nmode: continue\nstatus: success\nstarted_at: '2026-05-12T12:00:00Z'\nduration_ms: 1000\nstages_completed: 1\nstages_total: 1\nstages_failed: 0\nmodel: zai/glm-5.1\n");
     const runDir = path.join(ws.runsDir, "20260512T110000Z");
     mkdirSync(path.join(runDir, "sessions"), { recursive: true });
-    writeFileSync(path.join(runDir, "run.yaml"), "run_id: 20260512T110000Z\nmode: normal\nstatus: success\nstarted_at: '2026-05-12T11:00:00Z'\nduration_ms: 2000\n");
+    mkdirSync(path.join(runDir, "logs"), { recursive: true });
+    writeFileSync(path.join(runDir, "run.yaml"), "run_id: 20260512T110000Z\nmode: normal\nstatus: success\nstarted_at: '2026-05-12T11:00:00Z'\nduration_ms: 2000\nstages_completed: 2\nstages_total: 3\nstages_failed: 1\nmodel: anthropic/test\n");
+    writeFileSync(path.join(runDir, "logs", "a.log"), "DONE: exit=0 duration=10ms turns=1 tools=2 tokens_in=3 tokens_out=4 tokens_total=700 api_errors=0 retries=0 final_stop=end\n");
+    writeFileSync(path.join(runDir, "logs", "b.log"), "DONE: exit=1 duration=20ms turns=1 tools=3 tokens_in=5 tokens_out=6 tokens_total=800 api_errors=0 retries=0 final_stop=error\n");
     writeFileSync(path.join(runDir, "flow-report.html"), "old report");
     writeFileSync(path.join(runDir, "youngflow.log"), "old log");
 
@@ -37,11 +40,21 @@ describe("flow report run history", () => {
     expect(html).toContain("Run History");
     expect(html).toContain("<h2 id=\"current-run-title\" class=\"section-title\">Current Run</h2>");
     expect(html).toContain("<th scope=\"col\">Run</th>");
+    expect(html).toContain("<th scope=\"col\">Stages</th>");
+    expect(html).toContain("<th scope=\"col\">Tokens</th>");
+    expect(html).toContain("<th scope=\"col\">Tools</th>");
+    expect(html).toContain("<th scope=\"col\">Failures</th>");
+    expect(html).toContain("<th scope=\"col\">Model</th>");
     expect(html).toContain("Current");
     expect(html).toContain("20260512T110000Z");
     expect(html).toContain("runs/20260512T110000Z/flow-report.html");
     expect(html).toContain("runs/20260512T110000Z/youngflow.log");
     expect(html).toContain("runs/20260512T110000Z/sessions");
+    expect(html).toContain("2/3");
+    expect(html).toContain("1.5K");
+    expect(html).toContain("5");
+    expect(html).toContain("anthropic/test");
+    expect(html).toContain("zai/glm-5.1");
   });
 
   it("renders worker details as native details table and promotes child failures", () => {
