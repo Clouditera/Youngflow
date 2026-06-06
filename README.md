@@ -95,7 +95,7 @@ output_dir/
 │   ├── run.yaml             当前 run 元数据
 │   ├── checkpoints/         断点恢复文件
 │   ├── logs/                per-stage .log（--trace-events 时另有 .events.jsonl）
-│   ├── sessions/            pi 会话记录 (.jsonl + .html)
+│   ├── sessions/            pi 会话记录 (.jsonl + .html + .md)
 │   ├── flow-report.html     执行状态面板（每 stage 完成后实时刷新）
 │   └── runs/                --continue 归档的历史引擎态
 │       └── 20260512T123456Z/
@@ -615,7 +615,9 @@ youngflow flows/vulnhunt/flow.yaml --work-dir ./project --output-dir ./output --
 | `.youngflow/logs/{stage_id}.log` | 人类可读日志：工具调用、错误、统计 |
 | `.youngflow/logs/{stage_id}.events.jsonl` | 可选；`--trace-events` 开启时保存 compact 后的 pi CLI NDJSON 事件流，用于底层调试 |
 
-默认不保存 `.events.jsonl`，因为流式 update / subagent 快照可能非常大；常规排障优先查看 `.log`、`youngflow.log`、`session.html` 和 `flow-report.html`。
+默认不保存 `.events.jsonl`，因为流式 update / subagent 快照可能非常大；常规排障优先查看 `.log`、`youngflow.log`、`session.html`、`session.md` 和 `flow-report.html`。
+
+`session.md` 与 pi 原始 `.jsonl`、HTML 导出并列生成，面向 agent 快速阅读：完整保留 user/assistant 文本、thinking/reasoning、tool call 参数；tool result 默认截断到 1500 字符或 30 行（先到者），并标注截断信息。
 
 日志中的关键指标：
 ```

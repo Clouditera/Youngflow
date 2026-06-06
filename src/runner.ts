@@ -21,7 +21,7 @@ import {
   stringifyLogValue,
   truncateLogText,
 } from "./log-format.js";
-
+import { exportSessionMarkdown } from "./session-markdown.js";
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -448,6 +448,7 @@ export class Runner {
 
         if (sessionFile && this.engineConfig.exportSessions) {
           exportSessionHtml(sessionFile);
+          exportSessionMarkdown(sessionFile, { stageId });
         }
 
         const result: RunResult = {
