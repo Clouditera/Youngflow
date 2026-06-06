@@ -21,8 +21,8 @@ const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
 const CUSTOM_PROVIDER = "youngflow";
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000;
 
-// Reasoning effort maps removed — pi auto-detects compat from provider name.
-// YoungFlow only needs to set provider + reasoning: true.
+// Reasoning effort maps removed. DeepSeek custom still needs explicit compat
+// because pi currently suppresses developer role by DeepSeek URL but not provider.
 
 const API_TYPE_MAP: Record<string, string> = {
   openai: "openai-completions",
@@ -190,7 +190,11 @@ function createAgentDir(opts: {
           input: ["text"],
           contextWindow: opts.contextWindowTokens,
           maxTokens: 16384,
-          ...((opts.isDeepSeekCustom || opts.isZaiCustom) ? {
+          ...(opts.isDeepSeekCustom ? {
+            reasoning: true,
+            compat: { supportsDeveloperRole: false },
+          } : {}),
+          ...(opts.isZaiCustom ? {
             reasoning: true,
           } : {}),
         },

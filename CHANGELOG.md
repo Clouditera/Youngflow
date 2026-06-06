@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Restored explicit `compat.supportsDeveloperRole: false` for custom DeepSeek model config so proxied DeepSeek endpoints do not receive unsupported `developer` role messages.
+
 ## 0.2.13 - 2026-06-06
 
 ### Added

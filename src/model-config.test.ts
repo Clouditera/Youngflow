@@ -37,8 +37,7 @@ describe("resolveModelConfig", () => {
       const model = provider.models[0];
       expect(model.id).toBe("deepseek-v4-pro");
       expect(model.reasoning).toBe(true);
-      // compat is intentionally omitted — pi auto-detects from provider name
-      expect(model.compat).toBeUndefined();
+      expect(model.compat).toEqual({ supportsDeveloperRole: false });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -160,7 +159,7 @@ describe("resolveModelConfig", () => {
       const model = provider.models[0];
       expect(model.id).toBe("glm-5.1");
       expect(model.reasoning).toBe(true);
-      // compat is intentionally omitted — pi auto-detects from provider name "zai"
+      // ZAI compat is intentionally omitted — pi auto-detects from provider name "zai".
       expect(model.compat).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -181,7 +180,7 @@ describe("resolveModelConfig", () => {
       const models = readModelsJson(config.agentDir!);
       expect(models.providers.zai).toBeDefined();
       expect(models.providers.zai.models[0].reasoning).toBe(true);
-      // compat omitted — pi detects from provider name
+      // ZAI compat is intentionally omitted — pi detects from provider name.
       expect(models.providers.zai.models[0].compat).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
