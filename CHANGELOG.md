@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.13 - 2026-06-06
 
 ### Added
 - Added agent-readable `session.md` export next to pi session `.jsonl`/`.html`, preserving text, thinking, and tool calls while truncating tool results.
