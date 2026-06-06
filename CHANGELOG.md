@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.14 - 2026-06-06
 
 ### Fixed
-- Restored explicit `compat.supportsDeveloperRole: false` for custom DeepSeek model config so proxied DeepSeek endpoints do not receive unsupported `developer` role messages.
+- Fixed DeepSeek custom/proxy `developer` role 400 errors by restoring explicit `compat.supportsDeveloperRole: false` override for custom DeepSeek models (issue #26).
+- Kept ZAI custom model config simplified to provider-only detection with `reasoning: true` and no compat override.
 
 ## 0.2.13 - 2026-06-06
 
