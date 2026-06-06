@@ -193,6 +193,12 @@ function createAgentDir(opts: {
           ...((opts.isDeepSeekCustom || opts.isZaiCustom) ? {
             reasoning: true,
           } : {}),
+          ...(opts.isDeepSeekCustom ? {
+            compat: {
+              supportsDeveloperRole: false,
+              thinkingFormat: "deepseek",
+            },
+          } : {}),
         },
       ],
     };

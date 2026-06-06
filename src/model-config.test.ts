@@ -37,8 +37,10 @@ describe("resolveModelConfig", () => {
       const model = provider.models[0];
       expect(model.id).toBe("deepseek-v4-pro");
       expect(model.reasoning).toBe(true);
-      // compat is intentionally omitted — pi auto-detects from provider name
-      expect(model.compat).toBeUndefined();
+      expect(model.compat).toEqual({
+        supportsDeveloperRole: false,
+        thinkingFormat: "deepseek",
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
