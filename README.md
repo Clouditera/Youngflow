@@ -619,6 +619,8 @@ youngflow flows/vulnhunt/flow.yaml --work-dir ./project --output-dir ./output --
 
 `session.md` 与 pi 原始 `.jsonl`、HTML 导出并列生成，面向 agent 快速阅读：完整保留 user/assistant 文本、thinking/reasoning、tool call 参数；tool result 默认截断到 1500 字符或 30 行（先到者），并标注截断信息。
 
+长时间运行时，`flow-report.html` 会做 5 秒节流刷新以降低全量日志重解析开销；run 结束时会强制刷新最终报告。
+
 日志中的关键指标：
 ```
 DONE: exit=0 duration=374978ms turns=22 tools=52

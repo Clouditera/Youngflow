@@ -483,6 +483,103 @@ describe("map stage filter", () => {
   });
 });
 
+describe("long-running flow memory controls", () => {
+  const tmpDirs: string[] = [];
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function makeLoopingMapFlow(maxLoops: number): { dir: string; flowPath: string; outDir: string } {
+    const dir = path.join(os.tmpdir(), `youngflow-oom-loop-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    tmpDirs.push(dir);
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    mkdirSync(path.join(outDir, "items"), { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    writeFileSync(path.join(outDir, "items", "a.txt"), "a\n");
+    writeFileSync(path.join(outDir, "items", "b.txt"), "b\n");
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: scan",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over: items/*.txt",
+      "    concurrency: 1",
+      "    state:",
+      "      item_count:",
+      "        glob: items/*.txt",
+      "    routes:",
+      "      - to: scan",
+      "        when: scan.item_count > 0",
+      `        max_loops: ${maxLoops}`,
+      "      - to: report",
+      "  - id: report",
+      "    skills: [test-skill]",
+    ].join("\n"));
+    return { dir, flowPath, outDir };
+  }
+
+  it("keeps stage_results bounded to one summary per map execution", async () => {
+    const { dir, flowPath, outDir } = makeLoopingMapFlow(3);
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    (orch as any).executor = {
+      execute: async (stage: any, options: any) => ({ stageId: stage.id, exitCode: 0, durationMs: 1, outputDir: options?.outputDir ?? outDir }),
+    };
+
+    const result = await orch.run();
+
+    const scanSummaries = result.stageResults.filter((r: any) => r.id === "scan");
+    expect(scanSummaries).toHaveLength(4); // initial execution + 3 loopbacks, not 8 worker entries
+    expect(result.stageResults.filter((r: any) => r.id === "report")).toHaveLength(1);
+    expect(result.stageResults.some((r: any) => String(r.id).includes("/"))).toBe(false);
+  });
+
+  it("aggregates only current-round worker results for repeated map stages", async () => {
+    const { dir, flowPath, outDir } = makeLoopingMapFlow(1);
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    let calls = 0;
+    (orch as any).executor = {
+      execute: async (stage: any, options: any) => {
+        calls++;
+        const durationMs = calls <= 2 ? 100 : stage.id === "scan" ? 1 : 5;
+        return { stageId: stage.id, exitCode: 0, durationMs, outputDir: options?.outputDir ?? outDir };
+      },
+    };
+
+    const result = await orch.run();
+
+    const scanDurations = result.stageResults.filter((r: any) => r.id === "scan").map((r: any) => r.duration_ms);
+    expect(scanDurations).toEqual([200, 2]);
+  });
+
+  it("throttles report refreshes and force-flushes at run end", async () => {
+    const { dir, flowPath, outDir } = makeLoopingMapFlow(1);
+    const spec = parseFlow(flowPath);
+    let refreshes = 0;
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, {
+      workDir: dir,
+      outputDir: outDir,
+      recursionLimit: 50,
+      onReportRefresh: () => { refreshes++; },
+    });
+    (orch as any).executor = {
+      execute: async (stage: any, options: any) => ({ stageId: stage.id, exitCode: 0, durationMs: 1, outputDir: options?.outputDir ?? outDir }),
+    };
+
+    await orch.run();
+
+    expect(refreshes).toBe(2); // initial refresh + forced final refresh; worker/collector refreshes are throttled
+  });
+});
+
 describe("flows/demo-join deterministic validation", () => {
   const tmpDirs: string[] = [];
   afterEach(() => {

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Reduced long-running flow memory growth by moving map worker results into a transient `_worker_results` channel and keeping `stage_results` to one summary per stage execution.
+- Fixed repeated map-stage aggregation so each collector summarizes only the current round, not historical same-stage worker results.
+- Throttled live report refresh to reduce repeated full-log parsing during large fan-outs; final report is still force-flushed.
+
+### Changed
+- End-of-run `stages_total` now reflects stage executions rather than individual map worker invocations.
+
 ## 0.2.14 - 2026-06-06
 
 ### Fixed

@@ -84,6 +84,13 @@ const FlowStateAnnotation = Annotation.Root({
     reducer: (a, b) => [...a, ...b],
     default: () => [],
   }),
+  _worker_results: Annotation<Array<Record<string, any>>>({
+    reducer: (a, b) => {
+      if (b.length === 1 && b[0]?.__clear === true) return [];
+      return [...a, ...b];
+    },
+    default: () => [],
+  }),
   route_counts: Annotation<Record<string, number>>({
     reducer: (a, b) => ({ ...a, ...b }),
     default: () => ({}),
@@ -152,6 +159,9 @@ export class Orchestrator {
   private flowTimeoutTimer?: ReturnType<typeof setTimeout>;
   private flowAbortController?: AbortController;
   private onReportRefresh?: () => void;
+  private lastReportAt = 0;
+  private reportTimer?: ReturnType<typeof setTimeout>;
+  private static readonly REPORT_THROTTLE_MS = 5000;
 
   constructor(
     spec: FlowSpec,
@@ -221,6 +231,7 @@ export class Orchestrator {
     const initialState: FlowState = {
       extracted: {},
       stage_results: [],
+      _worker_results: [],
       route_counts: {},
       _route_targets: {},
       fork_context: undefined,
@@ -236,11 +247,15 @@ export class Orchestrator {
     }
 
     if (this.spec.timeout == null) {
-      const result = await graph.invoke(initialState, { recursionLimit: this.recursionLimit });
-      return {
-        stageResults: result.stage_results ?? [],
-        extracted: result.extracted ?? {},
-      };
+      try {
+        const result = await graph.invoke(initialState, { recursionLimit: this.recursionLimit });
+        return {
+          stageResults: result.stage_results ?? [],
+          extracted: result.extracted ?? {},
+        };
+      } finally {
+        this.refreshReport(true);
+      }
     }
 
     logEvent({ category: "engine", event: "flow_timeout_start", timeout_s: this.spec.timeout });
@@ -266,6 +281,7 @@ export class Orchestrator {
       };
     } finally {
       this.clearFlowTimeout();
+      this.refreshReport(true);
     }
   }
 
@@ -526,7 +542,7 @@ export class Orchestrator {
       if (self.resume && self.checkpoint.isDone(workerKey)) {
         logEvent({ category: "stage", event: "stage_skipped", stage: workerKey, reason: "resume" });
         const cached = self.checkpoint.loadDone(workerKey);
-        return { stage_results: [cached] };
+        return { _worker_results: [cached] };
       }
 
       // Execute
@@ -565,7 +581,7 @@ export class Orchestrator {
       self.checkpoint.markDone(workerKey, resultEntry);
 
       self.refreshReport();
-      return { stage_results: [resultEntry] };
+      return { _worker_results: [resultEntry] };
     });
 
     builder.addEdge(workerId, collectorId);
@@ -589,15 +605,14 @@ export class Orchestrator {
 
       const updates: Record<string, any> = {};
 
-      const results = state.stage_results ?? [];
-      const stageResults = results.filter(
-        (r: Record<string, any>) => r.id === stage.id,
+      const workerResults = (state._worker_results ?? []).filter(
+        (r: Record<string, any>) => r.__clear !== true,
       );
-      const totalDuration = stageResults.reduce(
+      const totalDuration = workerResults.reduce(
         (s: number, r: Record<string, any>) => s + (r.duration_ms ?? 0),
         0,
       );
-      const allOk = stageResults.every(
+      const allOk = workerResults.every(
         (r: Record<string, any>) => (r.exit_code ?? 0) === 0,
       );
 
@@ -608,6 +623,8 @@ export class Orchestrator {
         outputDir: self.workspace.root,
       };
 
+      updates.stage_results = [self.resultDict(synthetic, fanoutStartedAt)];
+      updates._worker_results = [{ __clear: true }];
       updates.extracted = self.mergeStageState(stage, state, synthetic);
 
       self.checkpoint.markDone(stage.id, {
@@ -783,7 +800,24 @@ export class Orchestrator {
     return { fork_context: next };
   }
 
-  private refreshReport(): void {
+  private refreshReport(force = false): void {
+    const now = Date.now();
+    const elapsed = now - this.lastReportAt;
+    if (!force && this.lastReportAt > 0 && elapsed < Orchestrator.REPORT_THROTTLE_MS) {
+      if (!this.reportTimer) {
+        this.reportTimer = setTimeout(() => {
+          this.reportTimer = undefined;
+          this.refreshReport(true);
+        }, Orchestrator.REPORT_THROTTLE_MS - elapsed);
+      }
+      return;
+    }
+
+    if (this.reportTimer) {
+      clearTimeout(this.reportTimer);
+      this.reportTimer = undefined;
+    }
+    this.lastReportAt = now;
     report.refresh(this.spec, this.workspace);
     this.onReportRefresh?.();
   }
