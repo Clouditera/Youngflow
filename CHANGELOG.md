@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.15 - 2026-06-06
 
 ### Fixed
 - Reduced long-running flow memory growth by moving map worker results into a transient `_worker_results` channel and keeping `stage_results` to one summary per stage execution.
