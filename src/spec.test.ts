@@ -41,6 +41,26 @@ describe("parseFlow", () => {
     expect(spec.stages[0].timeout).toBe(1800);
   });
 
+  it("parses optional models_json artifact path", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    writeFileSync(path.join(dir, "models.json"), "{\"providers\":{}}\n");
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "artifacts:",
+      "  models_json: models.json",
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.modelsJsonPath).toBe(path.join(dir, "models.json"));
+  });
+
   it("leaves flow-level timeout undefined when omitted", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);

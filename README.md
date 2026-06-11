@@ -534,24 +534,39 @@ extensions/output-contract/
 
 ## 模型凭证配置
 
-flow `.env` 文件支持以下变量：
+YoungFlow v0.3.0 起不再支持 `LLM_*` / `MODEL_*` 环境变量翻译。模型配置直接使用 pi 原生寻址：
 
-```bash
-# 协议类型（openai / anthropic）
-MODEL_PROTO_TYPE=openai
-# 模型名称
-LLM_MODEL_NAME=claude-sonnet-4-6
-# 自定义 API 端点（可选，设置后走中转）
-LLM_BASE_URL=http://your-proxy:3000/v1
-# API Key
-LLM_API_KEY=sk-xxx
-# 推理力度（可选）
-MODEL_EFFORT=medium
+```yaml
+artifacts:
+  env_file: .env
+  models_json: models.json   # 可选；自定义 endpoint / 多 provider 时使用
+
+defaults:
+  model: anthropic/claude-sonnet-4-5:high
 ```
 
-引擎自动将这些变量转换为 pi 可识别的 `models.json` + `auth.json`，放在 flow 目录下的 `.pi-agent/` 中。
+简单 builtin provider 只需在 `.env` 放标准 key，例如：
 
-如果 `.env` 未配置或字段缺失，使用 `defaults.model` 指定的模型（需要 pi 本身已配置对应 provider 的凭证）。
+```bash
+ANTHROPIC_API_KEY=sk-...
+```
+
+自定义 endpoint / 多凭证场景提供 pi-native `models.json`，key 建议用 `$ENV` 引用：
+
+```json
+{
+  "providers": {
+    "zai": {
+      "baseUrl": "https://proxy.example.com/zai",
+      "api": "openai-completions",
+      "apiKey": "$ZAI_API_KEY",
+      "models": [{ "id": "glm-5.1", "contextWindow": 128000, "maxTokens": 16384, "reasoning": true }]
+    }
+  }
+}
+```
+
+启动时 YoungFlow 会运行 `pi --list-models` 硬预检：所有 `defaults.model` / `stage.model` 引用的模型必须在可用列表中（模型存在且 key 已配置），否则 fail fast。thinking effort 写在模型后缀中，例如 `anthropic/claude-sonnet-4-5:high`。
 
 ## 断点恢复
 

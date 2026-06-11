@@ -35,7 +35,7 @@ describe("Orchestrator recursion limit", () => {
     const { dir, flowPath } = makeFlow();
     tmpDirs.push(dir);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, {}, { outputDir: path.join(dir, "out") });
+    const orch = new Orchestrator(spec, {}, { outputDir: path.join(dir, "out"), skipModelPrecheck: true });
     expect(orch.recursionLimit).toBe(100);
   });
 
@@ -43,7 +43,7 @@ describe("Orchestrator recursion limit", () => {
     const { dir, flowPath } = makeFlow(150);
     tmpDirs.push(dir);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, {}, { outputDir: path.join(dir, "out") });
+    const orch = new Orchestrator(spec, {}, { outputDir: path.join(dir, "out"), skipModelPrecheck: true });
     expect(orch.recursionLimit).toBe(150);
   });
 
@@ -51,7 +51,7 @@ describe("Orchestrator recursion limit", () => {
     const { dir, flowPath } = makeFlow(150);
     tmpDirs.push(dir);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, {}, { outputDir: path.join(dir, "out"), recursionLimit: 300 });
+    const orch = new Orchestrator(spec, {}, { outputDir: path.join(dir, "out"), recursionLimit: 300, skipModelPrecheck: true });
     expect(orch.recursionLimit).toBe(300);
   });
 });
@@ -155,7 +155,7 @@ function makeRoutingFlow(files: { inv: boolean; hyp: boolean }): { dir: string; 
 async function runRoutingFixture(files: { inv: boolean; hyp: boolean }): Promise<{ executed: string[]; outDir: string; dir: string }> {
   const { dir, flowPath, outDir } = makeRoutingFlow(files);
   const spec = parseFlow(flowPath);
-  const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 100 });
+  const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 100, skipModelPrecheck: true });
   const executed: string[] = [];
   (orch as any).executor = {
     execute: async (stage: any) => {
@@ -205,7 +205,7 @@ describe("multi-target routing + join integration", () => {
     const { dir, flowPath, outDir } = makeRoutingFlow({ inv: true, hyp: true });
     tmpDirs.push(dir);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, resume: true, recursionLimit: 100 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, resume: true, recursionLimit: 100, skipModelPrecheck: true });
     orch.checkpoint.markDone("discovery", { id: "discovery", exit_code: 0, duration_ms: 1 });
     orch.checkpoint.markDone("research", { id: "research", exit_code: 0, duration_ms: 1 });
     orch.checkpoint.saveState({ extracted: { discovery: { inv_pending: 1, hyp_pending: 1 } }, route_counts: {} });
@@ -263,7 +263,7 @@ describe("multi-target routing + join integration", () => {
       "    skills: [test-skill]",
     ].join("\n"));
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     const executed: string[] = [];
     (orch as any).executor = {
       execute: async (stage: any) => {
@@ -320,7 +320,7 @@ describe("multi-target routing + join integration", () => {
     writeFileSync(path.join(outDir, "left.flag"), "1\n");
     writeFileSync(path.join(outDir, "right.flag"), "1\n");
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     const executed: string[] = [];
     (orch as any).executor = {
       execute: async (stage: any) => {
@@ -377,7 +377,7 @@ describe("map stage filter", () => {
     const { dir, flowPath, outDir } = makeMapFilterFlow(filterYaml);
     tmpDirs.push(dir);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     const executed: string[] = [];
     (orch as any).executor = {
       execute: async (stage: any, options: any) => {
@@ -445,7 +445,7 @@ describe("map stage filter", () => {
       ...filterYaml.split("\n").map((line) => `      ${line}`),
     ].join("\n"));
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     const executed: string[] = [];
     (orch as any).executor = {
       execute: async (_stage: any, options: any) => {
@@ -528,7 +528,7 @@ describe("long-running flow memory controls", () => {
   it("keeps stage_results bounded to one summary per map execution", async () => {
     const { dir, flowPath, outDir } = makeLoopingMapFlow(3);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     (orch as any).executor = {
       execute: async (stage: any, options: any) => ({ stageId: stage.id, exitCode: 0, durationMs: 1, outputDir: options?.outputDir ?? outDir }),
     };
@@ -544,7 +544,7 @@ describe("long-running flow memory controls", () => {
   it("aggregates only current-round worker results for repeated map stages", async () => {
     const { dir, flowPath, outDir } = makeLoopingMapFlow(1);
     const spec = parseFlow(flowPath);
-    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     let calls = 0;
     (orch as any).executor = {
       execute: async (stage: any, options: any) => {
@@ -568,6 +568,7 @@ describe("long-running flow memory controls", () => {
       workDir: dir,
       outputDir: outDir,
       recursionLimit: 50,
+      skipModelPrecheck: true,
       onReportRefresh: () => { refreshes++; },
     });
     (orch as any).executor = {
@@ -602,7 +603,7 @@ describe("flows/demo-join deterministic validation", () => {
       writeFileSync(path.join(outDir, "hypotheses", "pending", "HYP-001.txt"), "hyp\n");
     }
     const spec = parseFlow(demoFlowPath());
-    const orch = new Orchestrator(spec, { work_dir: process.cwd(), output_dir: outDir }, { workDir: process.cwd(), outputDir: outDir, recursionLimit: 50 });
+    const orch = new Orchestrator(spec, { work_dir: process.cwd(), output_dir: outDir }, { workDir: process.cwd(), outputDir: outDir, recursionLimit: 50, skipModelPrecheck: true });
     const executed: string[] = [];
     (orch as any).executor = {
       execute: async (stage: any) => {

@@ -95,6 +95,7 @@ export interface FlowSpec {
   readonly extensionsDir: string | undefined;
   readonly schemasDir: string | undefined;
   readonly envFile: string | undefined;
+  readonly modelsJsonPath: string | undefined;
   readonly defaultModel: string;
   readonly defaultMaxParallel: number;
   readonly defaultAgent: string | undefined;
@@ -133,6 +134,9 @@ export function parseFlow(
   const envFileRel = artifacts.env_file ?? ".env";
   const envPath = path.join(flowDir, envFileRel);
   const envFile = existsSync(envPath) ? envPath : undefined;
+  const modelsJsonPath = artifacts.models_json
+    ? path.join(flowDir, artifacts.models_json)
+    : undefined;
 
   // Defaults
   const defaults = raw.defaults ?? {};
@@ -172,6 +176,7 @@ export function parseFlow(
     extensionsDir,
     schemasDir,
     envFile,
+    modelsJsonPath,
     defaultModel,
     defaultMaxParallel,
     defaultAgent,
@@ -429,6 +434,9 @@ function validateSemantics(
 
   // Verify agents directory
   const artifacts = raw.artifacts ?? {};
+  if (artifacts.models_json && !existsSync(path.join(flowDir, artifacts.models_json))) {
+    errors.push(`[semantic] artifacts.models_json not found: ${artifacts.models_json}`);
+  }
   const agentsDir = path.join(flowDir, artifacts.agents ?? "agents");
   if (existsSync(agentsDir)) {
     const files = readdirSync(agentsDir);

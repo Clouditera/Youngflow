@@ -13,7 +13,7 @@ import { compare, parseLiteral } from "./condition.js";
 import { engineConfigFromEnv, type EngineConfig } from "./engine-config.js";
 import { Executor, type StageResult } from "./executor.js";
 import { Runner, loadEnvFile } from "./runner.js";
-import { resolveModelConfig, type ModelConfig } from "./model-config.js";
+import { precheckModels, resolveModelConfig, type ModelConfig } from "./model-config.js";
 import * as report from "./report.js";
 import {
   type FlowSpec,
@@ -138,6 +138,13 @@ interface RouteDecision {
   routeCounts: Record<string, number>;
 }
 
+function collectReferencedModels(spec: FlowSpec): string[] {
+  return [...new Set([
+    spec.defaultModel,
+    ...spec.stages.map((s) => s.model).filter((m): m is string => !!m),
+  ])];
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
@@ -174,6 +181,7 @@ export class Orchestrator {
       traceEvents?: boolean;
       recursionLimit?: number;
       onReportRefresh?: () => void;
+      skipModelPrecheck?: boolean;
     } = {},
   ) {
     this.spec = spec;
@@ -194,7 +202,11 @@ export class Orchestrator {
       spec.defaultModel,
       spec.flowDir,
       spec.agentsDir,
+      spec.modelsJsonPath,
     );
+    if (!opts.skipModelPrecheck) {
+      precheckModels(collectReferencedModels(spec), modelConfig.agentDir, modelConfig.envVars);
+    }
     const engineConfig = engineConfigFromEnv(rawEnv);
     this.runner = new Runner({
       modelConfig,

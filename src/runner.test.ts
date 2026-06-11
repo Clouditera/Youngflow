@@ -94,8 +94,7 @@ describe("Runner command construction", () => {
       modelConfig: {
         modelString: "deepseek/deepseek-v4-pro",
         thinkingLevel: "medium",
-        apiKey: undefined,
-        agentDir: undefined,
+        agentDir: "/tmp/.pi-agent",
         envVars: {},
       },
       engineConfig: {

@@ -46,6 +46,9 @@ properties:
       env_file:
         type: string
         default: ".env"
+      models_json:
+        type: string
+        description: pi-native models.json path (relative to flow.yaml); optional for builtin providers
     additionalProperties: false
 
   # ── 默认配置 ──

@@ -30,7 +30,7 @@ export { render } from "./prompt.js";
 export type { PromptContext } from "./prompt.js";
 export { engineConfigFromEnv } from "./engine-config.js";
 export type { EngineConfig } from "./engine-config.js";
-export { resolveModelConfig } from "./model-config.js";
+export { precheckModels, resolveModelConfig, stripEffortSuffix } from "./model-config.js";
 export type { ModelConfig } from "./model-config.js";
 export { refresh, collectStageReports } from "./report.js";
 

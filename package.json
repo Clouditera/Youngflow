@@ -1,6 +1,6 @@
 {
   "name": "youngflow",
-  "version": "0.2.15",
+  "version": "0.3.0",
   "description": "Generic AI flow runner — LangGraph orchestration + pi CLI execution",
   "type": "module",
   "main": "dist/index.js",

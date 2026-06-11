@@ -1,52 +1,29 @@
 /**
- * Model configuration: translate .env model config into pi agent dir.
+ * Model configuration: prepare pi agent dir for direct models.json usage.
  *
- * Reads MODEL_PROTO_TYPE / LLM_MODEL_NAME / LLM_BASE_URL / LLM_API_KEY / MODEL_EFFORT,
- * creates .pi-agent/ with models.json + auth.json.
+ * YoungFlow no longer translates LLM_* env vars into pi config. Users either rely
+ * on pi builtin providers with standard key env vars, or provide a pi-native
+ * models.json via artifacts.models_json.
  */
 
 import {
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
-  writeFileSync,
+  statSync,
   symlinkSync,
   unlinkSync,
-  lstatSync,
-  statSync,
+  writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { debug } from "./logger.js";
-
-const API_KEY_ENV = "YOUNGFLOW_LLM_API_KEY";
-const CUSTOM_PROVIDER = "youngflow";
-const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000;
-
-// Reasoning effort maps removed. DeepSeek custom still needs explicit compat
-// because pi currently suppresses developer role by DeepSeek URL but not provider.
-
-const API_TYPE_MAP: Record<string, string> = {
-  openai: "openai-completions",
-  anthropic: "anthropic",
-  // Pass-through: user already specified the exact pi-cli API type
-  "openai-completions": "openai-completions",
-  "openai-responses": "openai-responses",
-};
-
-const BUILTIN_PROVIDERS = new Set([
-  "anthropic",
-  "openai",
-  "google",
-  "groq",
-  "xai",
-  "openrouter",
-  "mistral",
-]);
 
 export interface ModelConfig {
   readonly modelString: string;
   readonly thinkingLevel: string | undefined;
-  readonly apiKey: string | undefined;
-  readonly agentDir: string | undefined;
+  readonly agentDir: string;
   readonly envVars: Record<string, string>;
 }
 
@@ -55,169 +32,59 @@ export function resolveModelConfig(
   defaultModel: string,
   agentDirBase?: string,
   agentsDir?: string,
+  modelsJsonPath?: string,
 ): ModelConfig {
-  const proto = (env.MODEL_PROTO_TYPE ?? "").trim();
-  const modelName = (env.LLM_MODEL_NAME ?? "").trim();
-  const baseUrl = (env.LLM_BASE_URL ?? "").trim();
-  const apiKey = (env.LLM_API_KEY ?? "").trim();
-  const effort = (env.MODEL_EFFORT ?? "").trim();
-  const contextWindowTokens = parseContextWindowTokens(env.LLM_CONTEXT_WINDOW_TOKENS);
+  const agentDir = createAgentDir({
+    base: agentDirBase,
+    agentsDir,
+    modelsJsonPath,
+  });
 
-  if (!proto && !modelName && !apiKey) {
-    debug("model_config", "info", "No model config in .env — using default: %s", defaultModel);
-    return { modelString: defaultModel, thinkingLevel: undefined, apiKey: undefined, agentDir: undefined, envVars: {} };
-  }
-
-  if (!modelName) {
-    debug("model_config", "warning", "LLM_MODEL_NAME not set — using default: %s", defaultModel);
-    return { modelString: defaultModel, thinkingLevel: undefined, apiKey: undefined, agentDir: undefined, envVars: {} };
-  }
-
-  const isCustom = !!baseUrl;
-  const isDeepSeekCustom = isCustom && isDeepSeekLike(modelName, baseUrl);
-  const isZaiCustom = isCustom && !isDeepSeekCustom && isZaiLike(modelName, baseUrl);
-  const provider = isCustom ? (isDeepSeekCustom ? "deepseek" : isZaiCustom ? "zai" : CUSTOM_PROVIDER) : proto;
-  const modelString = `${provider}/${modelName}`;
-  const thinkingLevel = effort || undefined;
-
-  const envVars: Record<string, string> = {};
-  if (apiKey) envVars[API_KEY_ENV] = apiKey;
-
-  let agentDir: string | undefined;
-  if (apiKey || isCustom) {
-    const agentDirPath = createAgentDir({
-      proto,
-      modelName,
-      baseUrl,
-      apiKeyEnv: apiKey ? API_KEY_ENV : undefined,
-      provider,
-      isCustom,
-      isDeepSeekCustom,
-      isZaiCustom,
-      contextWindowTokens,
-      base: agentDirBase,
-      agentsDir,
-    });
-    agentDir = agentDirPath;
-    envVars["PI_CODING_AGENT_DIR"] = agentDir;
-  }
-
-  debug("model_config", "info", "Model config: model=%s provider=%s custom=%s agentDir=%s",
-    modelString, provider, isCustom, agentDir ?? "(none)");
+  debug(
+    "model_config",
+    "info",
+    "Model config: model=%s agentDir=%s modelsJson=%s",
+    defaultModel,
+    agentDir,
+    modelsJsonPath ?? "(empty)",
+  );
 
   return {
-    modelString,
-    thinkingLevel,
-    apiKey: apiKey || undefined,
+    modelString: defaultModel,
+    thinkingLevel: undefined,
     agentDir,
-    envVars,
+    envVars: {
+      ...env,
+      PI_CODING_AGENT_DIR: agentDir,
+    },
   };
 }
 
-function parseContextWindowTokens(raw: string | undefined): number {
-  const value = Number.parseInt(raw ?? "", 10);
-  if (!Number.isFinite(value) || value < 1000 || value > 10000000) return DEFAULT_CONTEXT_WINDOW_TOKENS;
-  return value;
-}
-
-function isDeepSeekLike(modelName: string, baseUrl: string): boolean {
-  const model = modelName.toLowerCase();
-  const url = baseUrl.toLowerCase();
-  return (
-    model === "deepseek" ||
-    model.startsWith("deepseek-") ||
-    model.startsWith("deepseek/") ||
-    model.startsWith("deepseek-ai/") ||
-    url.includes("deepseek")
-  );
-}
-
-function isZaiLike(modelName: string, baseUrl: string): boolean {
-  const model = modelName.toLowerCase();
-  const url = baseUrl.toLowerCase();
-  return (
-    model.startsWith("glm-") ||
-    model.startsWith("glm4") ||
-    model.startsWith("glm5") ||
-    url.includes("bigmodel.cn") ||
-    url.includes("zhipuai")
-  );
-}
-
 function createAgentDir(opts: {
-  proto: string;
-  modelName: string;
-  baseUrl: string;
-  apiKeyEnv?: string;
-  provider: string;
-  isCustom: boolean;
-  isDeepSeekCustom: boolean;
-  isZaiCustom: boolean;
-  contextWindowTokens: number;
   base?: string;
   agentsDir?: string;
+  modelsJsonPath?: string;
 }): string {
   const agentDir = path.join(opts.base ?? process.cwd(), ".pi-agent");
   mkdirSync(agentDir, { recursive: true });
 
-  // auth.json
-  const authData: Record<string, any> = {};
-  if (opts.apiKeyEnv && !opts.isCustom) {
-    authData[opts.provider] = { type: "api_key", key: opts.apiKeyEnv };
-  }
-  writeFileSync(
-    path.join(agentDir, "auth.json"),
-    JSON.stringify(authData, null, 2),
-    "utf-8",
-  );
+  writeFileSync(path.join(agentDir, "auth.json"), "{}\n", "utf-8");
 
-  // models.json
-  let modelsData: Record<string, any>;
-  if (opts.isCustom) {
-    const apiType = API_TYPE_MAP[opts.proto];
-    if (!apiType) {
-      throw new Error(
-        `Unknown MODEL_PROTO_TYPE: "${opts.proto}". ` +
-        `Valid values: ${Object.keys(API_TYPE_MAP).join(", ")}`,
-      );
-    }
-    const providerConfig: Record<string, any> = {
-      baseUrl: opts.baseUrl,
-      api: apiType,
-      models: [
-        {
-          id: opts.modelName,
-          input: ["text"],
-          contextWindow: opts.contextWindowTokens,
-          maxTokens: 16384,
-          ...(opts.isDeepSeekCustom ? {
-            reasoning: true,
-            compat: { supportsDeveloperRole: false },
-          } : {}),
-          ...(opts.isZaiCustom ? {
-            reasoning: true,
-          } : {}),
-        },
-      ],
-    };
-    if (opts.apiKeyEnv) providerConfig.apiKey = opts.apiKeyEnv;
-    modelsData = { providers: { [opts.provider]: providerConfig } };
+  if (opts.modelsJsonPath) {
+    copyFileSync(opts.modelsJsonPath, path.join(agentDir, "models.json"));
   } else {
-    modelsData = { providers: {} };
+    writeFileSync(
+      path.join(agentDir, "models.json"),
+      JSON.stringify({ providers: {} }, null, 2) + "\n",
+      "utf-8",
+    );
   }
-  writeFileSync(
-    path.join(agentDir, "models.json"),
-    JSON.stringify(modelsData, null, 2),
-    "utf-8",
-  );
 
-  // settings.json
   const settingsPath = path.join(agentDir, "settings.json");
   if (!existsSync(settingsPath)) {
     writeFileSync(settingsPath, "{}", "utf-8");
   }
 
-  // agents/ symlink
   if (opts.agentsDir && existsSync(opts.agentsDir) && statSync(opts.agentsDir).isDirectory()) {
     const linkPath = path.join(agentDir, "agents");
     try {
@@ -231,4 +98,64 @@ function createAgentDir(opts: {
   }
 
   return agentDir;
+}
+
+export function precheckModels(
+  referencedModels: readonly string[],
+  agentDir: string,
+  env: Record<string, string>,
+): void {
+  const wanted = [...new Set(referencedModels.map(stripEffortSuffix).filter(Boolean))];
+  if (wanted.length === 0) return;
+
+  const res = spawnSync("pi", ["--list-models"], {
+    env: { ...process.env, ...env, PI_CODING_AGENT_DIR: agentDir },
+    encoding: "utf-8",
+    timeout: 30_000,
+  });
+
+  if (res.error) {
+    throw new Error(`Model precheck failed to run pi --list-models: ${res.error.message}`);
+  }
+
+  const stdout = res.stdout ?? "";
+  const stderr = res.stderr ?? "";
+  if (stderr.includes("errors loading models.json")) {
+    throw new Error(`Invalid models.json:\n${stderr.trim()}`);
+  }
+  if ((res.status ?? 0) !== 0) {
+    throw new Error(
+      `Model precheck failed (pi --list-models exit ${res.status}):\n${(stderr || stdout).trim()}`,
+    );
+  }
+
+  const available = parseListModels(stdout);
+  const missing = wanted.filter((m) => !available.has(m));
+  if (missing.length > 0) {
+    const preview = [...available].sort().slice(0, 10).join(", ") || "none";
+    throw new Error(
+      `Model(s) unavailable: ${missing.join(", ")}. ` +
+      `Ensure each is defined in models.json and its key env var is set. ` +
+      `Available: ${preview}`,
+    );
+  }
+}
+
+export function stripEffortSuffix(model: string): string {
+  const knownEfforts = new Set(["low", "medium", "high", "xhigh", "none", "auto"]);
+  const idx = model.lastIndexOf(":");
+  if (idx === -1) return model;
+  const suffix = model.slice(idx + 1).toLowerCase();
+  return knownEfforts.has(suffix) ? model.slice(0, idx) : model;
+}
+
+function parseListModels(stdout: string): Set<string> {
+  const available = new Set<string>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.toLowerCase().startsWith("provider")) continue;
+    const cols = trimmed.split(/\s+/);
+    if (cols.length >= 2) available.add(`${cols[0]}/${cols[1]}`);
+  }
+  return available;
 }

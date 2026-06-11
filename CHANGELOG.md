@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 - 2026-06-11
+
+### BREAKING
+- Removed `LLM_*` / `MODEL_*` environment variable translation. YoungFlow now uses pi-native model configuration: builtin providers use standard pi key env vars, and custom/multi-provider flows provide `artifacts.models_json`.
+
+### Added
+- Added direct `models.json` passthrough into `.pi-agent/models.json` and startup model availability precheck via `pi --list-models`.
+
 ## 0.2.15 - 2026-06-06
 
 ### Fixed
