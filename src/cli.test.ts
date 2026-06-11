@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createRunId, hasActiveRun, validateRunModeOptions, parseRecursionLimit } from "./cli.js";
+import { createRunId, hasActiveRun, validateRunModeOptions, parseRecursionLimit, resolveInputs } from "./cli.js";
 
 describe("CLI run mode helpers", () => {
   it("formats run ids as UTC timestamps", () => {
@@ -60,5 +60,25 @@ describe("CLI run mode helpers", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe("resolveInputs declared defaults", () => {
+  it("applies an input's declared default when no CLI value is given", () => {
+    const spec = { enable_poc: { type: "str", default: "" } };
+    const inputs = resolveInputs({}, spec);
+    expect(inputs.enable_poc).toBe("");
+  });
+
+  it("applies non-empty declared defaults", () => {
+    const spec = { max_items: { type: "str", default: "5" } };
+    const inputs = resolveInputs({}, spec);
+    expect(inputs.max_items).toBe("5");
+  });
+
+  it("lets a CLI value override the declared default", () => {
+    const spec = { enable_poc: { type: "str", default: "" } };
+    const inputs = resolveInputs({ enablePoc: "true" }, spec);
+    expect(inputs.enable_poc).toBe("true");
   });
 });

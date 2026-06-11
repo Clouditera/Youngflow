@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 - 2026-06-11
+
+### Fixed
+- Apply declared `inputs.*.default` values from flow.yaml when no CLI value is given. Previously only engine built-ins (`work_dir`/`output_dir`) received defaults, so an optional input with a declared default was omitted from flow inputs and its `${flow_inputs.x}` token leaked into prompts unsubstituted.
+
 ## 0.3.0 - 2026-06-11
 
 ### BREAKING

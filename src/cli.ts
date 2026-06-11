@@ -168,7 +168,7 @@ export function main(): void {
   });
 }
 
-function resolveInputs(
+export function resolveInputs(
   opts: Record<string, any>,
   spec: Record<string, any>,
 ): Record<string, any> {
@@ -182,6 +182,11 @@ function resolveInputs(
 
     if (value == null && key in ENGINE_DEFAULTS) {
       value = ENGINE_DEFAULTS[key]();
+    }
+
+    // Fall back to the input's declared default from flow.yaml
+    if (value == null && "default" in sp) {
+      value = sp.default;
     }
 
     if (sp.required && !value && !(key in ENGINE_DEFAULTS)) {
