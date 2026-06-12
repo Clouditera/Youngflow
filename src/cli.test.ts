@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createRunId, hasActiveRun, validateRunModeOptions, parseRecursionLimit, resolveInputs } from "./cli.js";
+import { createRunId, hasActiveRun, validateRunModeOptions, parseRecursionLimit, resolveInputs, validateWorkDir } from "./cli.js";
 
 describe("CLI run mode helpers", () => {
   it("formats run ids as UTC timestamps", () => {
@@ -57,6 +57,33 @@ describe("CLI run mode helpers", () => {
       mkdirSync(path.join(tmp, ".youngflow"), { recursive: true });
       writeFileSync(path.join(tmp, ".youngflow", "run.yaml"), "status: running\n");
       expect(hasActiveRun(tmp)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("validateWorkDir", () => {
+  it("passes when work_dir exists and is a directory", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "youngflow-workdir-"));
+    try {
+      expect(() => validateWorkDir(tmp)).not.toThrow();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails clearly when work_dir does not exist", () => {
+    const missing = path.join(os.tmpdir(), `youngflow-missing-${Date.now()}`);
+    expect(() => validateWorkDir(missing)).toThrow(`Error: --work-dir does not exist: ${missing}`);
+  });
+
+  it("fails clearly when work_dir is a file", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "youngflow-workdir-file-"));
+    try {
+      const file = path.join(tmp, "not-a-dir");
+      writeFileSync(file, "x", "utf-8");
+      expect(() => validateWorkDir(file)).toThrow(`Error: --work-dir is not a directory: ${file}`);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

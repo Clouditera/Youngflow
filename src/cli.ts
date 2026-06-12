@@ -144,6 +144,13 @@ export function main(): void {
   // Resolve flow inputs
   const flowInputs = resolveInputs(opts, flowInputsSpec);
 
+  try {
+    validateWorkDir(flowInputs.work_dir);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
   validateRunModeOptions(opts);
 
   // Validate
@@ -166,6 +173,16 @@ export function main(): void {
     console.error(e);
     process.exit(1);
   });
+}
+
+export function validateWorkDir(workDir: string | undefined): void {
+  if (!workDir) return;
+  if (!existsSync(workDir)) {
+    throw new Error(`Error: --work-dir does not exist: ${workDir}`);
+  }
+  if (!statSync(workDir).isDirectory()) {
+    throw new Error(`Error: --work-dir is not a directory: ${workDir}`);
+  }
 }
 
 export function resolveInputs(

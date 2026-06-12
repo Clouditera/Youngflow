@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4 - 2026-06-11
+
+### Fixed
+- Validate `--work-dir` exists and is a directory at startup, failing fast with a clear message instead of surfacing a misleading `spawn pi ENOENT` when the working directory is missing.
+
 ## 0.3.3 - 2026-06-11
 
 ### Fixed
