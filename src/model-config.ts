@@ -11,12 +11,14 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import path from "node:path";
 import { debug } from "./logger.js";
 
@@ -68,7 +70,13 @@ function createAgentDir(opts: {
   const agentDir = path.join(opts.base ?? process.cwd(), ".pi-agent");
   mkdirSync(agentDir, { recursive: true });
 
-  writeFileSync(path.join(agentDir, "auth.json"), "{}\n", "utf-8");
+  // Inherit subscription credentials (OAuth: ChatGPT/Codex, Claude Pro/Max,
+  // Copilot) from the user's global pi agent dir. Pi stores these in
+  // ~/.pi/agent/auth.json and they cannot be supplied via models.json env keys.
+  // Without this, only env-key providers work; builtin subscription models
+  // (e.g. openai-codex/gpt-5.5) fail the precheck. Empty/missing global auth
+  // yields {} — identical to the previous behavior.
+  writeFileSync(path.join(agentDir, "auth.json"), readGlobalAuth(), "utf-8");
 
   if (opts.modelsJsonPath) {
     copyFileSync(opts.modelsJsonPath, path.join(agentDir, "models.json"));
@@ -98,6 +106,27 @@ function createAgentDir(opts: {
   }
 
   return agentDir;
+}
+
+/**
+ * Read the user's global pi auth.json (subscription OAuth tokens) so the
+ * isolated flow agent dir inherits them. Falls back to "{}" when absent or
+ * unreadable, preserving the prior no-credential behavior.
+ */
+function readGlobalAuth(): string {
+  const globalAuth =
+    process.env.PI_GLOBAL_AUTH_JSON ?? path.join(homedir(), ".pi", "agent", "auth.json");
+  try {
+    if (existsSync(globalAuth)) {
+      const raw = readFileSync(globalAuth, "utf-8");
+      JSON.parse(raw); // validate; throw to fallback on corruption
+      debug("model_config", "debug", "Inherited subscription auth from %s", globalAuth);
+      return raw.endsWith("\n") ? raw : raw + "\n";
+    }
+  } catch (e) {
+    debug("model_config", "debug", "Global auth not usable (%s); using empty auth", String(e));
+  }
+  return "{}\n";
 }
 
 export function precheckModels(

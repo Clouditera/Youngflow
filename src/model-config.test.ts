@@ -24,6 +24,8 @@ function makeFakePi(dir: string, stdout: string, stderr = "", exitCode = 0): str
 describe("resolveModelConfig", () => {
   it("copies provided models.json verbatim and passes env through", () => {
     const dir = tmpDir("copy");
+    const prevGlobalAuth = process.env.PI_GLOBAL_AUTH_JSON;
+    process.env.PI_GLOBAL_AUTH_JSON = path.join(dir, "no-such-auth.json");
     try {
       mkdirSync(dir, { recursive: true });
       const source = path.join(dir, "models.json");
@@ -40,17 +42,60 @@ describe("resolveModelConfig", () => {
       expect(readFileSync(path.join(config.agentDir, "models.json"), "utf-8")).toBe(content);
       expect(readJson(path.join(config.agentDir, "auth.json"))).toEqual({});
     } finally {
+      if (prevGlobalAuth === undefined) delete process.env.PI_GLOBAL_AUTH_JSON;
+      else process.env.PI_GLOBAL_AUTH_JSON = prevGlobalAuth;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it("writes empty models.json when absent for builtin providers", () => {
     const dir = tmpDir("empty");
+    const prevGlobalAuth = process.env.PI_GLOBAL_AUTH_JSON;
+    process.env.PI_GLOBAL_AUTH_JSON = path.join(dir, "no-such-auth.json");
     try {
       const config = resolveModelConfig({ ANTHROPIC_API_KEY: "secret" }, "anthropic/claude-sonnet-4-5", dir);
       expect(readJson(path.join(config.agentDir, "models.json"))).toEqual({ providers: {} });
       expect(readJson(path.join(config.agentDir, "auth.json"))).toEqual({});
     } finally {
+      if (prevGlobalAuth === undefined) delete process.env.PI_GLOBAL_AUTH_JSON;
+      else process.env.PI_GLOBAL_AUTH_JSON = prevGlobalAuth;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("inherits subscription auth from the global pi agent dir", () => {
+    const dir = tmpDir("auth-inherit");
+    const prevGlobalAuth = process.env.PI_GLOBAL_AUTH_JSON;
+    try {
+      mkdirSync(dir, { recursive: true });
+      const globalAuth = path.join(dir, "global-auth.json");
+      const authContent = { "openai-codex": { type: "oauth", access: "tok" } };
+      writeFileSync(globalAuth, JSON.stringify(authContent), "utf-8");
+      process.env.PI_GLOBAL_AUTH_JSON = globalAuth;
+
+      const config = resolveModelConfig({}, "openai-codex/gpt-5.5:high", dir);
+      expect(readJson(path.join(config.agentDir, "auth.json"))).toEqual(authContent);
+    } finally {
+      if (prevGlobalAuth === undefined) delete process.env.PI_GLOBAL_AUTH_JSON;
+      else process.env.PI_GLOBAL_AUTH_JSON = prevGlobalAuth;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to empty auth when global auth is corrupt", () => {
+    const dir = tmpDir("auth-corrupt");
+    const prevGlobalAuth = process.env.PI_GLOBAL_AUTH_JSON;
+    try {
+      mkdirSync(dir, { recursive: true });
+      const globalAuth = path.join(dir, "global-auth.json");
+      writeFileSync(globalAuth, "{ not valid json", "utf-8");
+      process.env.PI_GLOBAL_AUTH_JSON = globalAuth;
+
+      const config = resolveModelConfig({}, "anthropic/claude-sonnet-4-5", dir);
+      expect(readJson(path.join(config.agentDir, "auth.json"))).toEqual({});
+    } finally {
+      if (prevGlobalAuth === undefined) delete process.env.PI_GLOBAL_AUTH_JSON;
+      else process.env.PI_GLOBAL_AUTH_JSON = prevGlobalAuth;
       rmSync(dir, { recursive: true, force: true });
     }
   });
