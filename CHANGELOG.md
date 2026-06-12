@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3 - 2026-06-11
+
+### Fixed
+- Model precheck now parses both stdout and stderr from `pi --list-models`, since pi 0.79.0 writes the model table to stderr under non-TTY spawned execution. Previously this made all configured models appear unavailable.
+
 ## 0.3.2 - 2026-06-11
 
 ### Fixed

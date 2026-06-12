@@ -158,7 +158,7 @@ export function precheckModels(
     );
   }
 
-  const available = parseListModels(stdout);
+  const available = parseListModels(`${stdout}\n${stderr}`);
   const missing = wanted.filter((m) => !available.has(m));
   if (missing.length > 0) {
     const preview = [...available].sort().slice(0, 10).join(", ") || "none";

@@ -128,6 +128,17 @@ describe("precheckModels", () => {
     }
   });
 
+  it("passes when pi writes the model table to stderr", () => {
+    const dir = tmpDir("precheck-stderr");
+    try {
+      mkdirSync(dir, { recursive: true });
+      const binDir = makeFakePi(dir, "", "provider   model   context\nzai        glm-5.1  128K\n");
+      expect(() => precheckModels(["zai/glm-5.1:medium"], dir, { PATH: `${binDir}:${process.env.PATH ?? ""}` })).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("fails when a referenced model is absent", () => {
     const dir = tmpDir("precheck-missing");
     try {
