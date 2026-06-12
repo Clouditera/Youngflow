@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2 - 2026-06-11
+
+### Fixed
+- Inherit user global `~/.pi/agent/auth.json` subscription OAuth tokens into the flow's isolated `.pi-agent/`, so builtin subscription models (ChatGPT/Codex, Claude Pro/Max, Copilot) pass the v0.3.0 startup precheck instead of failing on missing key. Falls back to `{}` when global auth is empty, missing, or corrupt.
+
 ## 0.3.1 - 2026-06-11
 
 ### Fixed
