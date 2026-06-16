@@ -72,8 +72,8 @@ describe("render", () => {
       writeFileSync(path.join(tmpDir, "task.md"), "TASK BODY\n");
       const stage = makeStage({ task: "task.md", prompt: "Context ${work_dir}" });
       const result = render(stage, baseContext, tmpDir);
-      expect(result).toBe("TASK BODY\n\n---\n\n## Runtime Context\n\nContext /project");
-      expect(result).toContain("\n\n---\n\n## Runtime Context\n\n");
+      expect(result).toBe("TASK BODY\n\n---\n\n# Runtime Context\n\nContext /project");
+      expect(result).toContain("\n\n---\n\n# Runtime Context\n\n");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

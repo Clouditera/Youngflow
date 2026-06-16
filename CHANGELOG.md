@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6 - 2026-06-16
+
+### Changed
+- Runtime Context divider heading is now H1 (`# Runtime Context`) so it is top-level and cannot be interpreted as part of the previous task section.
+
 ## 0.3.5 - 2026-06-13
 
 ### Fixed

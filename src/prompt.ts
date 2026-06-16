@@ -40,7 +40,7 @@ export function render(
       rendered = rendered.replaceAll(`\${${key}}`, String(value));
     }
     if (parts.length > 0 && rendered) {
-      parts.push("---\n\n## Runtime Context");
+      parts.push("---\n\n# Runtime Context");
     }
     parts.push(rendered);
   }
