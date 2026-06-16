@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.5 - 2026-06-13
+
+### Fixed
+- Separate task body and rendered runtime prompt with a Markdown divider and `## Runtime Context` heading when both are present, preventing flow prompt content from visually merging into the last task section in exported sessions.
+
 ## 0.3.4 - 2026-06-11
 
 ### Fixed

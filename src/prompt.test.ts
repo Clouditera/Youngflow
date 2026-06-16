@@ -72,10 +72,31 @@ describe("render", () => {
       writeFileSync(path.join(tmpDir, "task.md"), "TASK BODY\n");
       const stage = makeStage({ task: "task.md", prompt: "Context ${work_dir}" });
       const result = render(stage, baseContext, tmpDir);
-      expect(result).toBe("TASK BODY\n\nContext /project");
+      expect(result).toBe("TASK BODY\n\n---\n\n## Runtime Context\n\nContext /project");
+      expect(result).toContain("\n\n---\n\n## Runtime Context\n\n");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("does not add runtime context heading for task-only stages", () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "youngflow-prompt-"));
+    try {
+      writeFileSync(path.join(tmpDir, "task.md"), "TASK BODY\n");
+      const stage = makeStage({ task: "task.md", prompt: "" });
+      const result = render(stage, baseContext, tmpDir);
+      expect(result).toBe("TASK BODY");
+      expect(result).not.toContain("Runtime Context");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not add runtime context heading for prompt-only stages", () => {
+    const stage = makeStage({ prompt: "Context ${work_dir}" });
+    const result = render(stage, baseContext, "/flow/tasks");
+    expect(result).toBe("Context /project");
+    expect(result).not.toContain("Runtime Context");
   });
 
   it("returns empty string for no prompt and no task", () => {
