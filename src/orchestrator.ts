@@ -10,6 +10,7 @@ import path from "node:path";
 import { Annotation, StateGraph, Send, END, START } from "@langchain/langgraph";
 import { Checkpoint } from "./checkpoint.js";
 import { compare, parseLiteral } from "./condition.js";
+import { resolveModelEnvReferences } from "./env-interpolation.js";
 import { engineConfigFromEnv, type EngineConfig } from "./engine-config.js";
 import { Executor, type StageResult } from "./executor.js";
 import { Runner, loadEnvFile } from "./runner.js";
@@ -184,10 +185,14 @@ export class Orchestrator {
       skipModelPrecheck?: boolean;
     } = {},
   ) {
-    this.spec = spec;
+    const rawEnv = spec.envFile ? loadEnvFile(spec.envFile) : {};
+    const effectiveEnv = { ...process.env, ...rawEnv };
+    const resolvedSpec = resolveModelEnvReferences(spec, effectiveEnv);
+
+    this.spec = resolvedSpec;
     this.flowInputs = flowInputs;
     this.resume = opts.resume ?? false;
-    this.maxParallel = opts.maxParallel ?? spec.defaultMaxParallel;
+    this.maxParallel = opts.maxParallel ?? resolvedSpec.defaultMaxParallel;
     this.onReportRefresh = opts.onReportRefresh;
 
     this.workspace = new Workspace(opts.outputDir ?? opts.workDir ?? ".");
@@ -196,30 +201,29 @@ export class Orchestrator {
     this.checkpoint = new Checkpoint(this.workspace.checkpointsDir);
 
     // Build runner
-    const rawEnv = spec.envFile ? loadEnvFile(spec.envFile) : {};
     const modelConfig = resolveModelConfig(
       rawEnv,
-      spec.defaultModel,
-      spec.flowDir,
-      spec.agentsDir,
-      spec.modelsJsonPath,
+      resolvedSpec.defaultModel,
+      resolvedSpec.flowDir,
+      resolvedSpec.agentsDir,
+      resolvedSpec.modelsJsonPath,
     );
     if (!opts.skipModelPrecheck) {
-      precheckModels(collectReferencedModels(spec), modelConfig.agentDir, modelConfig.envVars);
+      precheckModels(collectReferencedModels(resolvedSpec), modelConfig.agentDir, modelConfig.envVars);
     }
     const engineConfig = engineConfigFromEnv(rawEnv);
     this.runner = new Runner({
       modelConfig,
       engineConfig,
-      systemPromptPath: resolveAgent(spec),
+      systemPromptPath: resolveAgent(resolvedSpec),
       sessionDir: this.workspace.sessionsDir,
     });
 
     this.workDir = path.resolve(opts.workDir ?? ".");
-    this.recursionLimit = opts.recursionLimit ?? spec.recursionLimit ?? DEFAULT_RECURSION_LIMIT;
+    this.recursionLimit = opts.recursionLimit ?? resolvedSpec.recursionLimit ?? DEFAULT_RECURSION_LIMIT;
     this.executor = new Executor(
       this.runner,
-      spec,
+      resolvedSpec,
       this.workspace,
       this.workDir,
       flowInputs,
@@ -227,7 +231,7 @@ export class Orchestrator {
       this.flowAbortController?.signal,
     );
 
-    this.stageMap = new Map(spec.stages.map((s) => [s.id, s]));
+    this.stageMap = new Map(resolvedSpec.stages.map((s) => [s.id, s]));
   }
 
   get model(): string {

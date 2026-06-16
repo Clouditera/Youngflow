@@ -57,7 +57,7 @@ properties:
     properties:
       model:
         type: string
-        description: 默认模型（provider/model-name:effort）
+        description: 默认模型（provider/model-name:effort，或 ${env.NAME} 部署参数引用）
       max_parallel:
         type: integer
         minimum: 1
@@ -144,6 +144,7 @@ $defs:
         default: 1800
       model:
         type: string
+        description: 本阶段模型（provider/model-name:effort，或 ${env.NAME} 部署参数引用）
       agent:
         type: string
         description: 覆盖此阶段使用的 agent（相对于 agents 目录）

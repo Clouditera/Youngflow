@@ -545,6 +545,22 @@ defaults:
   model: anthropic/claude-sonnet-4-5:high
 ```
 
+部署环境需要切换模型但不想改 flow 主体时，可在 model 字段使用 `${env.NAME}`（仅 `defaults.model` / `stages[].model` 支持；不是全 YAML 模板）：
+
+```yaml
+defaults:
+  model: ${env.YF_DEFAULT_MODEL}
+
+stages:
+  - id: scan
+    model: ${env.YF_FAST_MODEL}
+```
+
+```bash
+YF_DEFAULT_MODEL=zai/glm-5.1:medium
+YF_FAST_MODEL=deepseek/deepseek-v4-flash
+```
+
 简单 builtin provider 只需在 `.env` 放标准 key，例如：
 
 ```bash

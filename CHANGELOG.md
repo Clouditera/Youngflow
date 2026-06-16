@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.7 - 2026-06-16
+
+### Added
+- Support `${env.NAME}` interpolation in `defaults.model` and `stages[].model`, resolved from process env plus flow `.env` before model precheck. This lets deployments choose model aliases via `.env` without restoring removed `LLM_*` translation.
+
 ## 0.3.6 - 2026-06-16
 
 ### Changed
