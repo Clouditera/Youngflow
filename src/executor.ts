@@ -380,6 +380,7 @@ export class Executor {
     };
     if (s.extensionsDir) artifacts.extensions = s.extensionsDir;
     if (s.schemasDir) artifacts.schemas = s.schemasDir;
+    if (s.templatesDir) artifacts.templates = s.templatesDir;
     return artifacts;
   }
 

@@ -43,6 +43,9 @@ properties:
       schemas:
         type: string
         description: Schema 目录（相对于 flow.yaml，提供 ${schemas} 变量）
+      templates:
+        type: string
+        description: Templates 目录（相对于 flow.yaml，提供 ${templates} 变量）
       env_file:
         type: string
         default: ".env"

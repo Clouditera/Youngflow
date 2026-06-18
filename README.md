@@ -129,7 +129,8 @@ flows/vulnhunt/
 ├── tasks/                 Task 描述文件
 │   ├── profiler.md
 │   └── ...
-└── schemas/               YAML Schema（可选）
+├── schemas/               YAML Schema（可选）
+└── templates/             Agent 可读取的模板目录（可选）
 ```
 
 ## flow.yaml 参考
@@ -145,6 +146,8 @@ artifacts:
   agents: agents/          # Agent 提示词目录
   skills: skills/          # Skill 目录
   tasks: tasks/            # Task 文件目录
+  schemas: schemas/        # Schema 目录，提供 ${schemas} 变量（可选）
+  templates: templates/    # Templates 目录，提供 ${templates} 变量（可选）
   env_file: .env           # 模型凭证文件
 
 # ── 默认配置（可被 stage 级别覆盖）──

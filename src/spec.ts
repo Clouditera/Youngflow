@@ -94,6 +94,7 @@ export interface FlowSpec {
   readonly tasksDir: string;
   readonly extensionsDir: string | undefined;
   readonly schemasDir: string | undefined;
+  readonly templatesDir: string | undefined;
   readonly envFile: string | undefined;
   readonly modelsJsonPath: string | undefined;
   readonly defaultModel: string;
@@ -130,6 +131,9 @@ export function parseFlow(
     : undefined;
   const schemasDir = artifacts.schemas
     ? path.join(flowDir, artifacts.schemas)
+    : undefined;
+  const templatesDir = artifacts.templates
+    ? path.join(flowDir, artifacts.templates)
     : undefined;
   const envFileRel = artifacts.env_file ?? ".env";
   const envPath = path.join(flowDir, envFileRel);
@@ -175,6 +179,7 @@ export function parseFlow(
     tasksDir,
     extensionsDir,
     schemasDir,
+    templatesDir,
     envFile,
     modelsJsonPath,
     defaultModel,

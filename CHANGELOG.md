@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.8 - 2026-06-16
+
+### Added
+- Add `artifacts.templates` directory support and `${templates}` prompt variable, parallel to `artifacts.schemas` / `${schemas}`. YoungFlow only exposes the directory path; it does not render templates.
+
 ## 0.3.7 - 2026-06-16
 
 ### Added

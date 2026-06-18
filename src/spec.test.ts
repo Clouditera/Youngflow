@@ -61,6 +61,42 @@ describe("parseFlow", () => {
     expect(spec.modelsJsonPath).toBe(path.join(dir, "models.json"));
   });
 
+  it("parses optional templates artifact path", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "artifacts:",
+      "  templates: templates",
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.templatesDir).toBe(path.join(dir, "templates"));
+  });
+
+  it("leaves templates artifact path undefined when omitted", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.templatesDir).toBeUndefined();
+  });
+
   it("leaves flow-level timeout undefined when omitted", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);

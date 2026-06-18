@@ -53,6 +53,16 @@ describe("render", () => {
     expect(result).toBe("Skills at /flow/skills");
   });
 
+  it("substitutes templates artifact dir", () => {
+    const ctx: PromptContext = {
+      ...baseContext,
+      artifacts: { ...baseContext.artifacts, templates: "/flow/templates" },
+    };
+    const stage = makeStage({ prompt: "Templates at ${templates}" });
+    const result = render(stage, ctx, "/flow/tasks");
+    expect(result).toBe("Templates at /flow/templates");
+  });
+
   it("substitutes iterate_file", () => {
     const ctx: PromptContext = { ...baseContext, iterateFile: "/data/item.yaml" };
     const stage = makeStage({ prompt: "Process ${iterate_file}" });

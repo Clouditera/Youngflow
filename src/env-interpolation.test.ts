@@ -40,6 +40,7 @@ function spec(overrides: Partial<FlowSpec> = {}): FlowSpec {
     tasksDir: "/flow/tasks",
     extensionsDir: undefined,
     schemasDir: undefined,
+    templatesDir: undefined,
     envFile: "/flow/.env",
     modelsJsonPath: undefined,
     defaultModel: "anthropic/claude-sonnet-4-5:high",
