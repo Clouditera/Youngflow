@@ -451,7 +451,7 @@ export class Orchestrator {
 
       self.logStageStart(stage, stage.id);
       const startedAt = new Date().toISOString().slice(0, 19);
-      const result = await self.executor.execute(stage);
+      const result = await self.executor.execute(stage, { reuseSession: stage.session.reuse });
       const updates: Record<string, any> = {
         stage_results: [self.resultDict(result, startedAt)],
       };
@@ -623,6 +623,7 @@ export class Orchestrator {
           result = await self.executor.execute(task, {
             outputDir,
             parentExtensions: stage.extensions,
+            reuseSession: stage.session.reuse,
           });
           debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
         } finally {
@@ -636,6 +637,7 @@ export class Orchestrator {
           result = await self.executor.execute(stage, {
             outputDir,
             iterateFile,
+            reuseSession: stage.session.reuse,
           });
           debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
         } finally {

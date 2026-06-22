@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { render, type PromptContext } from "./prompt.js";
+import { render, substituteVars, type PromptContext } from "./prompt.js";
 
 function makeStage(overrides: Record<string, any> = {}) {
   return {
@@ -12,6 +12,7 @@ function makeStage(overrides: Record<string, any> = {}) {
     skills: [],
     task: undefined as string | undefined,
     prompt: "",
+    session: { reuse: false, prompt: undefined },
     timeout: 1800,
     model: undefined,
     agent: undefined,
@@ -61,6 +62,12 @@ describe("render", () => {
     const stage = makeStage({ prompt: "Templates at ${templates}" });
     const result = render(stage, ctx, "/flow/tasks");
     expect(result).toBe("Templates at /flow/templates");
+  });
+
+  it("substituteVars renders only variables without task or divider", () => {
+    const result = substituteVars("Continue ${work_dir} -> ${output_dir}", baseContext);
+    expect(result).toBe("Continue /project -> /output");
+    expect(result).not.toContain("Runtime Context");
   });
 
   it("substitutes iterate_file", () => {

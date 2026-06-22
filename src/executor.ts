@@ -14,7 +14,7 @@ const MAX_STRING_CHARS = 4096;
 const MAX_ARRAY_ITEMS = 8;
 const MAX_OBJECT_KEYS = 40;
 
-import { render, type PromptContext } from "./prompt.js";
+import { render, substituteVars, type PromptContext } from "./prompt.js";
 import {
   type EventHandler,
   type RunConfig,
@@ -276,6 +276,7 @@ export class Executor {
       outputDir?: string;
       iterateFile?: string;
       parentExtensions?: readonly string[];
+      reuseSession?: boolean;
     } = {},
   ): Promise<StageResult> {
     let stageId = stage.id;
@@ -303,7 +304,19 @@ export class Executor {
       iterateFile: opts.iterateFile,
       artifacts: this.buildArtifactVars(),
     };
-    const taskMessage = render(stage, context, this.spec.tasksDir);
+
+    // Restricted Prepare must never create or resume a pi session. Normal
+    // stages may opt into a stable session path for loop continuation.
+    const executionPolicy = isStageSpec(stage) ? stage.executionPolicy : undefined;
+    const stableSession = !executionPolicy && opts.reuseSession === true;
+    const sessionFile = executionPolicy
+      ? undefined
+      : this.workspace.sessionPath(stage.id, itemKey, { stable: stableSession });
+    const isReuseTurn = stableSession && sessionFile !== undefined && existsSync(sessionFile);
+    if (sessionFile) mkdirSync(path.dirname(sessionFile), { recursive: true });
+    const taskMessage = isReuseTurn && stage.session.prompt
+      ? substituteVars(stage.session.prompt.trim(), context)
+      : render(stage, context, this.spec.tasksDir);
 
     // Resolve extensions
     let extNames: readonly string[];
@@ -331,7 +344,6 @@ export class Executor {
       envExtra.YOUNGFLOW_ITERATE_FILE = opts.iterateFile;
     }
 
-    const executionPolicy = isStageSpec(stage) ? stage.executionPolicy : undefined;
     let restrictedWorkDir: string | undefined;
     if (executionPolicy === "prepare-restricted") {
       const controlDir = process.env.PREPARE_CONTROL_DIR;
@@ -339,9 +351,6 @@ export class Executor {
       restrictedWorkDir = path.join(controlDir, "runtime");
       mkdirSync(restrictedWorkDir, { recursive: true, mode: 0o700 });
     }
-
-    // Restricted Prepare never creates or resumes a pi session.
-    const sessionFile = executionPolicy ? undefined : this.workspace.sessionPath(stage.id, itemKey);
 
     // Event handler
     const handler = new StageEventLogger(this.workspace.logsDir, stageId, {

@@ -47,6 +47,19 @@ describe("Workspace", () => {
     expect(p).toContain("CVE-001");
   });
 
+  it("sessionPath stable omits timestamp", () => {
+    const p = ws.sessionPath("profiler", undefined, { stable: true });
+    expect(p).toBe(path.join(ws.sessionsDir, "profiler", "session.jsonl"));
+  });
+
+  it("sessionPath stable keeps item identities distinct", () => {
+    const a = ws.sessionPath("scan", "A.yaml", { stable: true });
+    const b = ws.sessionPath("scan", "B.yaml", { stable: true });
+    expect(a).toBe(path.join(ws.sessionsDir, "scan", "A.yaml", "session.jsonl"));
+    expect(b).toBe(path.join(ws.sessionsDir, "scan", "B.yaml", "session.jsonl"));
+    expect(a).not.toBe(b);
+  });
+
   it("findFiles uses glob", () => {
     const subdir = path.join(tmpDir, "data");
     mkdirSync(subdir, { recursive: true });
