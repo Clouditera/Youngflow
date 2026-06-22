@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 - 2026-06-22
+
+### Added
+- Add same-run session reuse via per-stage `session.reuse: true`. Repeated single/map/parallel executions can resume the previous pi session using stable session paths.
+- Add `session.prompt` as an optional continuation message for reuse turns; it supports normal prompt variables and replaces the initial task+prompt on reuse.
+
 ## 0.3.8 - 2026-06-16
 
 ### Added

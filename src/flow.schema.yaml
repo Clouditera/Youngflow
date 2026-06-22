@@ -141,6 +141,8 @@ $defs:
       prompt:
         type: string
         description: 支持 ${work_dir} / ${output_dir} / ${iterate_file} 等变量
+      session:
+        $ref: "#/$defs/session"
       timeout:
         type: integer
         minimum: 1
@@ -249,6 +251,19 @@ $defs:
     required: [field]
     additionalProperties: false
 
+  session:
+    type: object
+    description: 会话复用配置（同一次运行内）；map 按 iterate_file 身份，parallel 按子任务身份
+    properties:
+      reuse:
+        type: boolean
+        default: false
+        description: 节点重复执行时复用上一次的会话
+      prompt:
+        type: string
+        description: 复用回合发送的续接消息（替代首次的 task+prompt），支持 ${...} 插值
+    additionalProperties: false
+
   route:
     type: object
     required: [to]
@@ -280,6 +295,8 @@ $defs:
         type: string
       prompt:
         type: string
+      session:
+        $ref: "#/$defs/session"
       timeout:
         type: integer
         minimum: 1

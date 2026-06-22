@@ -34,11 +34,7 @@ export function render(
   }
 
   if (stage.prompt) {
-    const vars = buildVars(context);
-    let rendered = stage.prompt.trim();
-    for (const [key, value] of Object.entries(vars)) {
-      rendered = rendered.replaceAll(`\${${key}}`, String(value));
-    }
+    const rendered = substituteVars(stage.prompt.trim(), context);
     if (parts.length > 0 && rendered) {
       parts.push("---\n\n# Runtime Context");
     }
@@ -46,6 +42,15 @@ export function render(
   }
 
   return parts.join("\n\n");
+}
+
+export function substituteVars(text: string, context: PromptContext): string {
+  const vars = buildVars(context);
+  let rendered = text;
+  for (const [key, value] of Object.entries(vars)) {
+    rendered = rendered.replaceAll(`\${${key}}`, String(value));
+  }
+  return rendered;
 }
 
 function buildVars(context: PromptContext): Record<string, string> {

@@ -54,20 +54,21 @@ export class Workspace {
     return globSync(pattern, { cwd: this.root, absolute: true }).sort();
   }
 
-  sessionPath(stageId: string, itemKey?: string): string {
-    const now = new Date();
-    const ts =
-      now.getUTCFullYear().toString() +
-      String(now.getUTCMonth() + 1).padStart(2, "0") +
-      String(now.getUTCDate()).padStart(2, "0") +
-      "-" +
-      String(now.getUTCHours()).padStart(2, "0") +
-      String(now.getUTCMinutes()).padStart(2, "0") +
-      String(now.getUTCSeconds()).padStart(2, "0");
-
+  sessionPath(stageId: string, itemKey?: string, opts: { stable?: boolean } = {}): string {
     const parts = [this.safeSegment(stageId)];
     if (itemKey) parts.push(this.safeSegment(itemKey));
-    parts.push(ts);
+    if (!opts.stable) {
+      const now = new Date();
+      const ts =
+        now.getUTCFullYear().toString() +
+        String(now.getUTCMonth() + 1).padStart(2, "0") +
+        String(now.getUTCDate()).padStart(2, "0") +
+        "-" +
+        String(now.getUTCHours()).padStart(2, "0") +
+        String(now.getUTCMinutes()).padStart(2, "0") +
+        String(now.getUTCSeconds()).padStart(2, "0");
+      parts.push(ts);
+    }
     return path.join(this.sessionsDir, ...parts, "session.jsonl");
   }
 

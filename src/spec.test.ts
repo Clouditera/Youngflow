@@ -97,6 +97,66 @@ describe("parseFlow", () => {
     expect(spec.templatesDir).toBeUndefined();
   });
 
+  it("parses stage session reuse config", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    session:",
+      "      reuse: true",
+      "      prompt: Continue ${work_dir}",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].session.reuse).toBe(true);
+    expect(spec.stages[0].session.prompt).toBe("Continue ${work_dir}");
+  });
+
+  it("defaults omitted session config", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].session).toEqual({ reuse: false, prompt: undefined });
+  });
+
+  it("parses parallel task session prompt", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: fanout",
+      "    type: parallel",
+      "    tasks:",
+      "      - id: left",
+      "        skills: [test-skill]",
+      "        session:",
+      "          prompt: Continue left",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].tasks[0].session).toEqual({ reuse: false, prompt: "Continue left" });
+  });
+
   it("leaves flow-level timeout undefined when omitted", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);

@@ -14,6 +14,7 @@ function stage(id: string, model?: string): any {
     skills: [],
     task: undefined,
     prompt: "",
+    session: { reuse: false, prompt: undefined },
     timeout: 1800,
     model,
     agent: undefined,

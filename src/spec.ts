@@ -46,12 +46,18 @@ export interface StateExtractSpec {
   readonly rules: Record<string, Record<string, unknown>>;
 }
 
+export interface SessionSpec {
+  readonly reuse: boolean;
+  readonly prompt: string | undefined;
+}
+
 export interface TaskSpec {
   readonly id: string;
   readonly name: string;
   readonly skills: readonly string[];
   readonly task: string | undefined;
   readonly prompt: string;
+  readonly session: SessionSpec;
   readonly timeout: number;
   readonly outputSubdir: string;
   readonly when: string | undefined;
@@ -70,6 +76,7 @@ export interface StageSpec {
   readonly skills: readonly string[];
   readonly task: string | undefined;
   readonly prompt: string;
+  readonly session: SessionSpec;
   readonly timeout: number;
   readonly model: string | undefined;
   readonly agent: string | undefined;
@@ -223,6 +230,7 @@ function parseStage(raw: Record<string, any>): StageSpec {
     skills: raw.skills ?? [],
     task: raw.task ?? undefined,
     prompt: raw.prompt ?? "",
+    session: parseSession(raw.session),
     timeout: raw.timeout ?? 1800,
     model: raw.model ?? undefined,
     agent: raw.agent ?? undefined,
@@ -246,6 +254,13 @@ function parseRoute(raw: Record<string, any>): RouteSpec {
   };
 }
 
+function parseSession(raw: Record<string, any> | undefined): SessionSpec {
+  return {
+    reuse: raw?.reuse ?? false,
+    prompt: raw?.prompt ?? undefined,
+  };
+}
+
 function parseTask(raw: Record<string, any>): TaskSpec {
   return {
     id: raw.id,
@@ -253,6 +268,7 @@ function parseTask(raw: Record<string, any>): TaskSpec {
     skills: raw.skills ?? [],
     task: raw.task ?? undefined,
     prompt: raw.prompt ?? "",
+    session: parseSession(raw.session),
     timeout: raw.timeout ?? 1800,
     outputSubdir: raw.output_subdir ?? raw.id,
     when: raw.when ?? undefined,

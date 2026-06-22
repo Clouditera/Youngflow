@@ -204,6 +204,26 @@ stages:
 | `inputs` | object | — | 运行时输入参数 |
 | `stages` | list | **必填** | Pipeline 阶段列表 |
 
+### Stage 会话复用
+
+默认每次 stage 执行都会开启新的 pi session。循环场景需要让同一节点带着上一轮对话历史继续时，可显式开启同一次运行内复用：
+
+```yaml
+- id: recon
+  skills: [project-profiler]
+  prompt: |
+    首次完整分析 ${work_dir}
+  session:
+    reuse: true
+    prompt: |
+      在上次基础上继续，重点检查新增线索
+```
+
+行为：
+- `session.reuse: true` 使用稳定 session 路径；single 按 stage id，map 按 `${iterate_file}` 的 item key，parallel 按子任务 id 复用。
+- 第一次执行仍发送正常 `task.md + prompt`；复用回合如果配置 `session.prompt`，只发送该续接消息（支持 `${...}` 变量），不重发 task。
+- 仅同一次运行内复用；`--continue` 归档 `.youngflow/sessions/` 后会自然开启新 session。
+
 ### Stage 类型
 
 | type | 调度方式 | 适用场景 | 关键字段 |

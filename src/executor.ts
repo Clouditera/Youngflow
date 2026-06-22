@@ -14,7 +14,7 @@ const MAX_STRING_CHARS = 4096;
 const MAX_ARRAY_ITEMS = 8;
 const MAX_OBJECT_KEYS = 40;
 
-import { render, type PromptContext } from "./prompt.js";
+import { render, substituteVars, type PromptContext } from "./prompt.js";
 import {
   type EventHandler,
   type RunConfig,
@@ -275,6 +275,7 @@ export class Executor {
       outputDir?: string;
       iterateFile?: string;
       parentExtensions?: readonly string[];
+      reuseSession?: boolean;
     } = {},
   ): Promise<StageResult> {
     let stageId = stage.id;
@@ -302,7 +303,15 @@ export class Executor {
       iterateFile: opts.iterateFile,
       artifacts: this.buildArtifactVars(),
     };
-    const taskMessage = render(stage, context, this.spec.tasksDir);
+
+    // Session file
+    const stableSession = opts.reuseSession === true;
+    const sessionFile = this.workspace.sessionPath(stage.id, itemKey, { stable: stableSession });
+    const isReuseTurn = stableSession && existsSync(sessionFile);
+    mkdirSync(path.dirname(sessionFile), { recursive: true });
+    const taskMessage = isReuseTurn && stage.session.prompt
+      ? substituteVars(stage.session.prompt.trim(), context)
+      : render(stage, context, this.spec.tasksDir);
 
     // Resolve extensions
     let extNames: readonly string[];
@@ -329,9 +338,6 @@ export class Executor {
     if (opts.iterateFile) {
       envExtra.YOUNGFLOW_ITERATE_FILE = opts.iterateFile;
     }
-
-    // Session file
-    const sessionFile = this.workspace.sessionPath(stage.id, itemKey);
 
     // Event handler
     const handler = new StageEventLogger(this.workspace.logsDir, stageId, {
