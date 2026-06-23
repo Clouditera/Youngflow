@@ -599,7 +599,7 @@ export class Runner {
       "--mode",
       "json",
       "--system-prompt",
-      `@${promptPath}`,
+      promptPath,
       "--no-skills",
     ];
     for (const skillDir of config.skillDirs) {
