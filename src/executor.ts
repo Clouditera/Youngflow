@@ -276,6 +276,7 @@ export class Executor {
       iterateFile?: string;
       parentExtensions?: readonly string[];
       parentTools?: readonly string[];
+      parentExcludeTools?: readonly string[];
       reuseSession?: boolean;
     } = {},
   ): Promise<StageResult> {
@@ -321,6 +322,13 @@ export class Executor {
         : this.spec.defaultTools
           ? [...this.spec.defaultTools]
           : undefined;
+    const effectiveExcludeTools = stage.excludeTools
+      ? [...stage.excludeTools]
+      : opts.parentExcludeTools
+        ? [...opts.parentExcludeTools]
+        : this.spec.defaultExcludeTools
+          ? [...this.spec.defaultExcludeTools]
+          : undefined;
 
     // Resolve extensions
     let extNames: readonly string[];
@@ -364,6 +372,7 @@ export class Executor {
           model: isStageSpec(stage) ? stage.model : undefined,
           systemPrompt: this.resolveAgentForStage(stage),
           tools: effectiveTools,
+          excludeTools: effectiveExcludeTools,
           extensions: extPaths,
           envExtra,
           stageId,

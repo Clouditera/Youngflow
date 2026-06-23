@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 - 2026-06-23
+
+### Added
+- Add per-stage and per parallel sub-task `exclude_tools` denylists applied after the tools allowlist, so a stage can drop tools from the global set without re-listing the full allowlist.
+
 ## 0.5.0 - 2026-06-23
 
 ### Added

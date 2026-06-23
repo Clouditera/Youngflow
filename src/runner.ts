@@ -54,6 +54,7 @@ export interface RunConfig {
   thinkingLevel?: string;
   systemPrompt?: string;
   tools?: string[];
+  excludeTools?: string[];
   extensions: string[];
   envExtra: Record<string, string>;
   stageId: string;
@@ -549,6 +550,9 @@ export class Runner {
       "--tools",
       config.tools && config.tools.length > 0 ? config.tools.join(",") : "read,bash,edit,write",
     );
+    if (config.excludeTools && config.excludeTools.length > 0) {
+      cmd.push("--exclude-tools", config.excludeTools.join(","));
+    }
     if (config.sessionFile) {
       cmd.push("--session", config.sessionFile);
     } else if (this.sessionDir) {

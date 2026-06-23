@@ -573,6 +573,7 @@ export class Orchestrator {
             outputDir,
             parentExtensions: stage.extensions,
             parentTools: stage.tools,
+            parentExcludeTools: stage.excludeTools,
             reuseSession: stage.session.reuse,
           });
           debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);

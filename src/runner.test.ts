@@ -134,6 +134,46 @@ describe("Runner command construction", () => {
     expect(cmd[cmd.indexOf("--tools") + 1]).toBe("read,coverage");
   });
 
+  it("passes explicit exclude tools denylist", () => {
+    const runner = new Runner({
+      modelConfig: {
+        modelString: "zai/glm-5.1",
+        agentDir: "/tmp/.pi-agent",
+        envVars: {},
+      },
+      engineConfig: {
+        errorRetries: 0,
+        errorRetryBackoff: 1,
+        idleTimeout: 60,
+        exportSessions: false,
+      },
+      systemPromptPath: "/tmp/system.md",
+    });
+
+    const cmd = (runner as any).buildCommand(defaultRunConfig({ task: "do it", excludeTools: ["coverage", "bash"] })) as string[];
+    expect(cmd[cmd.indexOf("--exclude-tools") + 1]).toBe("coverage,bash");
+  });
+
+  it("omits exclude tools flag when denylist is empty", () => {
+    const runner = new Runner({
+      modelConfig: {
+        modelString: "zai/glm-5.1",
+        agentDir: "/tmp/.pi-agent",
+        envVars: {},
+      },
+      engineConfig: {
+        errorRetries: 0,
+        errorRetryBackoff: 1,
+        idleTimeout: 60,
+        exportSessions: false,
+      },
+      systemPromptPath: "/tmp/system.md",
+    });
+
+    const cmd = (runner as any).buildCommand(defaultRunConfig({ task: "do it", excludeTools: [] })) as string[];
+    expect(cmd).not.toContain("--exclude-tools");
+  });
+
   it("falls back to builtin tools when tools allowlist is empty", () => {
     const runner = new Runner({
       modelConfig: {

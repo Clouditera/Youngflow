@@ -212,12 +212,15 @@ stages:
 - id: recon
   tools: [read, bash]              # 完全替换 defaults.tools
 
+- id: mutate
+  exclude_tools: [coverage]        # 从全局/default tools 中只减掉 coverage
+
 - id: verify
   extensions: [coverage]
   tools: [read, bash, coverage]    # 扩展工具需同时加载 extension + 放入 tools allowlist
 ```
 
-语义：`stage.tools` / `task.tools` 是 replace，不是 merge；parallel task 优先使用自身 `tools`，否则继承父 stage `tools`，再回退 `defaults.tools`。
+语义：`stage.tools` / `task.tools` 是 replace，不是 merge；`exclude_tools` 是 denylist，叠加在 allowlist 之后，适合“保留全局工具、只减一两个”。parallel task 优先使用自身 `tools`/`exclude_tools`，否则继承父 stage，再回退 defaults。
 
 ### Stage 会话复用
 

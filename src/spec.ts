@@ -59,6 +59,7 @@ export interface TaskSpec {
   readonly prompt: string;
   readonly session: SessionSpec;
   readonly tools: readonly string[] | undefined;
+  readonly excludeTools: readonly string[] | undefined;
   readonly timeout: number;
   readonly outputSubdir: string;
   readonly when: string | undefined;
@@ -79,6 +80,7 @@ export interface StageSpec {
   readonly prompt: string;
   readonly session: SessionSpec;
   readonly tools: readonly string[] | undefined;
+  readonly excludeTools: readonly string[] | undefined;
   readonly timeout: number;
   readonly model: string | undefined;
   readonly agent: string | undefined;
@@ -110,6 +112,7 @@ export interface FlowSpec {
   readonly defaultMaxParallel: number;
   readonly defaultAgent: string | undefined;
   readonly defaultTools: readonly string[] | undefined;
+  readonly defaultExcludeTools: readonly string[] | undefined;
   readonly defaultExtensions: readonly string[];
   readonly defaultEnv: Record<string, string>;
   readonly inputs: readonly FlowInputSpec[];
@@ -157,6 +160,7 @@ export function parseFlow(
   const defaultMaxParallel = defaults.max_parallel ?? 3;
   const defaultAgent = defaults.agent ?? undefined;
   const defaultTools = defaults.tools ? [...defaults.tools] : undefined;
+  const defaultExcludeTools = defaults.exclude_tools ? [...defaults.exclude_tools] : undefined;
   const defaultExtensions: string[] = defaults.extensions
     ? [...defaults.extensions]
     : [];
@@ -195,6 +199,7 @@ export function parseFlow(
     defaultMaxParallel,
     defaultAgent,
     defaultTools,
+    defaultExcludeTools,
     defaultExtensions,
     defaultEnv,
     inputs,
@@ -234,6 +239,7 @@ function parseStage(raw: Record<string, any>): StageSpec {
     prompt: raw.prompt ?? "",
     session: parseSession(raw.session),
     tools: raw.tools ? [...raw.tools] : undefined,
+    excludeTools: raw.exclude_tools ? [...raw.exclude_tools] : undefined,
     timeout: raw.timeout ?? 1800,
     model: raw.model ?? undefined,
     agent: raw.agent ?? undefined,
@@ -273,6 +279,7 @@ function parseTask(raw: Record<string, any>): TaskSpec {
     prompt: raw.prompt ?? "",
     session: parseSession(raw.session),
     tools: raw.tools ? [...raw.tools] : undefined,
+    excludeTools: raw.exclude_tools ? [...raw.exclude_tools] : undefined,
     timeout: raw.timeout ?? 1800,
     outputSubdir: raw.output_subdir ?? raw.id,
     when: raw.when ?? undefined,
