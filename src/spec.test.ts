@@ -97,6 +97,24 @@ describe("parseFlow", () => {
     expect(spec.templatesDir).toBeUndefined();
   });
 
+  it("parses default exclude_tools denylist", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "  exclude_tools: [coverage]",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.defaultExcludeTools).toEqual(["coverage"]);
+  });
+
   it("parses stage tools allowlist", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);
@@ -132,6 +150,24 @@ describe("parseFlow", () => {
     expect(spec.stages[0].tools).toBeUndefined();
   });
 
+  it("parses stage exclude_tools denylist", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    exclude_tools: [coverage]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].excludeTools).toEqual(["coverage"]);
+  });
+
   it("parses parallel task tools allowlist", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);
@@ -151,6 +187,27 @@ describe("parseFlow", () => {
 
     const spec = parseFlow(flowPath);
     expect(spec.stages[0].tasks[0].tools).toEqual(["read", "coverage"]);
+  });
+
+  it("parses parallel task exclude_tools denylist", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: fanout",
+      "    type: parallel",
+      "    tasks:",
+      "      - id: left",
+      "        skills: [test-skill]",
+      "        exclude_tools: [coverage]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].tasks[0].excludeTools).toEqual(["coverage"]);
   });
 
   it("parses stage session reuse config", () => {

@@ -25,6 +25,7 @@ function makeSpec(dir: string, overrides: Partial<FlowSpec> = {}): FlowSpec {
     defaultMaxParallel: 3,
     defaultAgent: undefined,
     defaultTools: undefined,
+    defaultExcludeTools: undefined,
     defaultExtensions: [],
     defaultEnv: {},
     inputs: [],
@@ -43,6 +44,7 @@ function makeStage(overrides: Record<string, any> = {}): any {
     prompt: "First ${work_dir}",
     session: { reuse: false, prompt: undefined },
     tools: undefined,
+    excludeTools: undefined,
     timeout: 1800,
     model: undefined,
     agent: undefined,
@@ -227,6 +229,71 @@ describe("Executor session reuse", () => {
       await executor.execute(makeStage({ id: "task-a", tools: ["read"] }), { parentTools: ["read", "coverage"] });
 
       expect(runner.configs[0].tools).toEqual(["read"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes stage own exclude_tools with effective tools", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-exclude-own-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir, { defaultTools: ["read", "bash", "coverage"] }), ws, dir, {});
+
+      await executor.execute(makeStage({ excludeTools: ["coverage"] }));
+
+      expect(runner.configs[0].tools).toEqual(["read", "bash", "coverage"]);
+      expect(runner.configs[0].excludeTools).toEqual(["coverage"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses default exclude_tools when own and parent are omitted", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-exclude-default-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir, { defaultExcludeTools: ["coverage"] }), ws, dir, {});
+
+      await executor.execute(makeStage());
+
+      expect(runner.configs[0].excludeTools).toEqual(["coverage"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parallel task inherits parentExcludeTools when it has no own exclude_tools", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-exclude-parent-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "task-a" }), { parentExcludeTools: ["coverage"] });
+
+      expect(runner.configs[0].excludeTools).toEqual(["coverage"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parallel task own exclude_tools override parentExcludeTools", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-exclude-task-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "task-a", excludeTools: ["bash"] }), { parentExcludeTools: ["coverage"] });
+
+      expect(runner.configs[0].excludeTools).toEqual(["bash"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
