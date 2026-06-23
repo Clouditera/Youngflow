@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 - 2026-06-23
+
+### Added
+- Add per-stage and per parallel sub-task `tools` allowlists that override `defaults.tools`, letting extension-registered tools be exposed only to specific stages.
+
 ## 0.4.1 - 2026-06-22
 
 ### Fixed

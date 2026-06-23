@@ -15,6 +15,7 @@ function stage(id: string, model?: string): any {
     task: undefined,
     prompt: "",
     session: { reuse: false, prompt: undefined },
+    tools: undefined,
     timeout: 1800,
     model,
     agent: undefined,

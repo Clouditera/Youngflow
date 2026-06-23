@@ -7,7 +7,7 @@ import { StageType, type FlowSpec } from "./spec.js";
 import { Workspace } from "./workspace.js";
 import type { RunConfig, RunResult } from "./runner.js";
 
-function makeSpec(dir: string): FlowSpec {
+function makeSpec(dir: string, overrides: Partial<FlowSpec> = {}): FlowSpec {
   return {
     sourcePath: path.join(dir, "flow.yaml"),
     flowDir: dir,
@@ -29,6 +29,7 @@ function makeSpec(dir: string): FlowSpec {
     defaultEnv: {},
     inputs: [],
     stages: [],
+    ...overrides,
   };
 }
 
@@ -41,6 +42,7 @@ function makeStage(overrides: Record<string, any> = {}): any {
     task: undefined,
     prompt: "First ${work_dir}",
     session: { reuse: false, prompt: undefined },
+    tools: undefined,
     timeout: 1800,
     model: undefined,
     agent: undefined,
@@ -161,6 +163,70 @@ describe("Executor session reuse", () => {
 
       expect(runner.configs[0].sessionFile).toBe(path.join(ws.sessionsDir, "scan", "A", "session.jsonl"));
       expect(runner.configs[1].sessionFile).toBe(path.join(ws.sessionsDir, "scan", "B", "session.jsonl"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses own stage tools before defaults", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-tools-own-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir, { defaultTools: ["read", "bash"] }), ws, dir, {});
+
+      await executor.execute(makeStage({ tools: ["read", "coverage"] }));
+
+      expect(runner.configs[0].tools).toEqual(["read", "coverage"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses default tools when stage tools are omitted", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-tools-default-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir, { defaultTools: ["read", "bash"] }), ws, dir, {});
+
+      await executor.execute(makeStage());
+
+      expect(runner.configs[0].tools).toEqual(["read", "bash"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parallel task inherits parentTools when it has no own tools", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-tools-parent-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir, { defaultTools: ["read"] }), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "task-a" }), { parentTools: ["read", "coverage"] });
+
+      expect(runner.configs[0].tools).toEqual(["read", "coverage"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parallel task own tools override parentTools", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-tools-task-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "task-a", tools: ["read"] }), { parentTools: ["read", "coverage"] });
+
+      expect(runner.configs[0].tools).toEqual(["read"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

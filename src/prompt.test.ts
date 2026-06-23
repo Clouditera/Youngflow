@@ -13,6 +13,7 @@ function makeStage(overrides: Record<string, any> = {}) {
     task: undefined as string | undefined,
     prompt: "",
     session: { reuse: false, prompt: undefined },
+    tools: undefined,
     timeout: 1800,
     model: undefined,
     agent: undefined,

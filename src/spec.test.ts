@@ -97,6 +97,62 @@ describe("parseFlow", () => {
     expect(spec.templatesDir).toBeUndefined();
   });
 
+  it("parses stage tools allowlist", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    tools: [read, coverage]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].tools).toEqual(["read", "coverage"]);
+  });
+
+  it("defaults omitted stage tools to undefined", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].tools).toBeUndefined();
+  });
+
+  it("parses parallel task tools allowlist", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: fanout",
+      "    type: parallel",
+      "    tasks:",
+      "      - id: left",
+      "        skills: [test-skill]",
+      "        tools: [read, coverage]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].tasks[0].tools).toEqual(["read", "coverage"]);
+  });
+
   it("parses stage session reuse config", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);

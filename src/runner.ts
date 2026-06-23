@@ -622,7 +622,7 @@ export class Runner {
     }
     cmd.push(
       "--tools",
-      config.tools ? config.tools.join(",") : "read,bash,edit,write",
+      config.tools && config.tools.length > 0 ? config.tools.join(",") : "read,bash,edit,write",
     );
     if (config.executionPolicy !== "prepare-restricted") {
       if (config.sessionFile) {
