@@ -143,6 +143,12 @@ $defs:
         description: 支持 ${work_dir} / ${output_dir} / ${iterate_file} 等变量
       session:
         $ref: "#/$defs/session"
+      tools:
+        type: array
+        items:
+          type: string
+        minItems: 1
+        description: 本阶段可用工具白名单（builtin + extension + custom），完全覆盖 defaults.tools；扩展工具仍需在 extensions 中加载
       timeout:
         type: integer
         minimum: 1
@@ -297,6 +303,12 @@ $defs:
         type: string
       session:
         $ref: "#/$defs/session"
+      tools:
+        type: array
+        items:
+          type: string
+        minItems: 1
+        description: 本 task 可用工具白名单（builtin + extension + custom），完全覆盖父 stage/defaults.tools；扩展工具仍需在 extensions 中加载
       timeout:
         type: integer
         minimum: 1

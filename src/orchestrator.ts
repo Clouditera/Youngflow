@@ -572,6 +572,7 @@ export class Orchestrator {
           result = await self.executor.execute(task, {
             outputDir,
             parentExtensions: stage.extensions,
+            parentTools: stage.tools,
             reuseSession: stage.session.reuse,
           });
           debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);

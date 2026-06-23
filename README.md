@@ -204,6 +204,21 @@ stages:
 | `inputs` | object | — | 运行时输入参数 |
 | `stages` | list | **必填** | Pipeline 阶段列表 |
 
+### Stage 工具白名单
+
+默认工具列表来自 `defaults.tools`，不配置时 runner 使用内置默认 `read,bash,edit,write`。需要只在部分 stage 放行扩展工具时，可在 stage 或 parallel task 上配置 `tools`：
+
+```yaml
+- id: recon
+  tools: [read, bash]              # 完全替换 defaults.tools
+
+- id: verify
+  extensions: [coverage]
+  tools: [read, bash, coverage]    # 扩展工具需同时加载 extension + 放入 tools allowlist
+```
+
+语义：`stage.tools` / `task.tools` 是 replace，不是 merge；parallel task 优先使用自身 `tools`，否则继承父 stage `tools`，再回退 `defaults.tools`。
+
 ### Stage 会话复用
 
 默认每次 stage 执行都会开启新的 pi session。循环场景需要让同一节点带着上一轮对话历史继续时，可显式开启同一次运行内复用：

@@ -58,6 +58,7 @@ export interface TaskSpec {
   readonly task: string | undefined;
   readonly prompt: string;
   readonly session: SessionSpec;
+  readonly tools: readonly string[] | undefined;
   readonly timeout: number;
   readonly outputSubdir: string;
   readonly when: string | undefined;
@@ -77,6 +78,7 @@ export interface StageSpec {
   readonly task: string | undefined;
   readonly prompt: string;
   readonly session: SessionSpec;
+  readonly tools: readonly string[] | undefined;
   readonly timeout: number;
   readonly model: string | undefined;
   readonly agent: string | undefined;
@@ -231,6 +233,7 @@ function parseStage(raw: Record<string, any>): StageSpec {
     task: raw.task ?? undefined,
     prompt: raw.prompt ?? "",
     session: parseSession(raw.session),
+    tools: raw.tools ? [...raw.tools] : undefined,
     timeout: raw.timeout ?? 1800,
     model: raw.model ?? undefined,
     agent: raw.agent ?? undefined,
@@ -269,6 +272,7 @@ function parseTask(raw: Record<string, any>): TaskSpec {
     task: raw.task ?? undefined,
     prompt: raw.prompt ?? "",
     session: parseSession(raw.session),
+    tools: raw.tools ? [...raw.tools] : undefined,
     timeout: raw.timeout ?? 1800,
     outputSubdir: raw.output_subdir ?? raw.id,
     when: raw.when ?? undefined,

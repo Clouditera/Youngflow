@@ -275,6 +275,7 @@ export class Executor {
       outputDir?: string;
       iterateFile?: string;
       parentExtensions?: readonly string[];
+      parentTools?: readonly string[];
       reuseSession?: boolean;
     } = {},
   ): Promise<StageResult> {
@@ -312,6 +313,14 @@ export class Executor {
     const taskMessage = isReuseTurn && stage.session.prompt
       ? substituteVars(stage.session.prompt.trim(), context)
       : render(stage, context, this.spec.tasksDir);
+
+    const effectiveTools = stage.tools
+      ? [...stage.tools]
+      : opts.parentTools
+        ? [...opts.parentTools]
+        : this.spec.defaultTools
+          ? [...this.spec.defaultTools]
+          : undefined;
 
     // Resolve extensions
     let extNames: readonly string[];
@@ -354,7 +363,7 @@ export class Executor {
           timeout: stage.timeout,
           model: isStageSpec(stage) ? stage.model : undefined,
           systemPrompt: this.resolveAgentForStage(stage),
-          tools: this.spec.defaultTools ? [...this.spec.defaultTools] : undefined,
+          tools: effectiveTools,
           extensions: extPaths,
           envExtra,
           stageId,
