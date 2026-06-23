@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 - 2026-06-22
+
+### Fixed
+- Pass the agent system prompt file as a bare path to pi `--system-prompt` instead of `@<path>`, so the agent identity/role file is actually loaded. Previously the literal `@/path` string was sent and agent prompts were silently ignored.
+
 ## 0.4.0 - 2026-06-22
 
 ### Added

@@ -113,6 +113,27 @@ describe("Runner command construction", () => {
     expect(cmd[cmd.indexOf("--thinking") + 1]).toBe("medium");
     expect(cmd).not.toContain("deepseek/deepseek-v4-pro:medium");
   });
+
+  it("passes system prompt as a bare path so pi loads the file", () => {
+    const runner = new Runner({
+      modelConfig: {
+        modelString: "zai/glm-5.1",
+        agentDir: "/tmp/.pi-agent",
+        envVars: {},
+      },
+      engineConfig: {
+        errorRetries: 0,
+        errorRetryBackoff: 1,
+        idleTimeout: 60,
+        exportSessions: false,
+      },
+      systemPromptPath: "/tmp/system.md",
+    });
+
+    const cmd = (runner as any).buildCommand(defaultRunConfig({ task: "do it" })) as string[];
+    expect(cmd[cmd.indexOf("--system-prompt") + 1]).toBe("/tmp/system.md");
+    expect(cmd).not.toContain("@/tmp/system.md");
+  });
 });
 
 // ---------------------------------------------------------------------------
