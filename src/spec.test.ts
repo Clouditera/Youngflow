@@ -446,6 +446,71 @@ describe("parseFlow", () => {
     expect(() => parseFlow(flowPath)).toThrow(/requires max_loops/);
   });
 
+  it("parses map glob over source", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: review",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over: findings/*.yaml",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].over).toBe("findings/*.yaml");
+    expect(spec.stages[0].overSource).toEqual({ kind: "glob", pattern: "findings/*.yaml" });
+  });
+
+  it("parses map yaml-list over source", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: review",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over:",
+      "      yaml: decision.yaml",
+      "      path: dispatch.items",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].over).toBeUndefined();
+    expect(spec.stages[0].overSource).toEqual({ kind: "yaml", file: "decision.yaml", path: "dispatch.items" });
+  });
+
+  it("rejects filter with yaml-list over source", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: review",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over:",
+      "      yaml: decision.yaml",
+      "      path: dispatch",
+      "    filter:",
+      "      field: status",
+      "      match: pending",
+    ].join("\n"));
+
+    expect(() => parseFlow(flowPath)).toThrow(/filter is only supported with file-glob 'over'/);
+  });
+
   function writeMapFilterFlow(dir: string, filterLines: string[]): string {
     const flowPath = path.join(dir, "flow.yaml");
     writeFileSync(flowPath, [

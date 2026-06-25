@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { evaluateRouteDecision, Orchestrator } from "./orchestrator.js";
+import { evaluateRouteDecision, Orchestrator, readYamlPathArray } from "./orchestrator.js";
+import { itemKeyFor } from "./executor.js";
 import { parseFlow } from "./spec.js";
 
 function makeFlow(recursionLimit?: number): { dir: string; flowPath: string } {
@@ -166,6 +167,120 @@ async function runRoutingFixture(files: { inv: boolean; hyp: boolean }): Promise
   await orch.run();
   return { executed, outDir, dir };
 }
+
+describe("map over yaml dispatch", () => {
+  const tmpDirs: string[] = [];
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  it("reads YAML/JSON string arrays and treats missing file/path as empty", () => {
+    const dir = path.join(os.tmpdir(), `youngflow-dispatch-read-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    tmpDirs.push(dir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "decision.yaml"), "nested:\n  dispatch:\n    - A\n    - B\n", "utf-8");
+    writeFileSync(path.join(dir, "decision.json"), JSON.stringify({ dispatch: ["J1", "J2"] }), "utf-8");
+
+    expect(readYamlPathArray(dir, "decision.yaml", "nested.dispatch")).toEqual(["A", "B"]);
+    expect(readYamlPathArray(dir, "decision.json", "dispatch")).toEqual(["J1", "J2"]);
+    expect(readYamlPathArray(dir, "missing.yaml", "dispatch")).toEqual([]);
+    expect(readYamlPathArray(dir, "decision.yaml", "nested.missing")).toEqual([]);
+  });
+
+  it("fails fast when yaml dispatch path is not a string array", () => {
+    const dir = path.join(os.tmpdir(), `youngflow-dispatch-invalid-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    tmpDirs.push(dir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "decision.yaml"), "dispatch: nope\nitems:\n  - A\n  - 1\n", "utf-8");
+
+    expect(() => readYamlPathArray(dir, "decision.yaml", "dispatch")).toThrow(/must be an array/);
+    expect(() => readYamlPathArray(dir, "decision.yaml", "items")).toThrow(/items must be strings/);
+  });
+
+  it("dispatches yaml string items and passes iterate_item to workers", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-dispatch-run-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    tmpDirs.push(dir);
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    writeFileSync(path.join(outDir, "decision.yaml"), [
+      "dispatch:",
+      "  - BUG-HYP-R7-I4-H3",
+      "  - 'Long arbitrary task: reproduce with params and keep this verbatim'",
+    ].join("\n"));
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: verify",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over:",
+      "      yaml: decision.yaml",
+      "      path: dispatch",
+      "    prompt: 'item=${iterate_item}'",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 100, skipModelPrecheck: true });
+    const seen: Array<{ item: string | undefined; key: string | undefined; outputDir: string | undefined }> = [];
+    (orch as any).executor = {
+      execute: async (_stage: any, opts: any) => {
+        seen.push({ item: opts.iterateItem, key: opts.iterateItemKey, outputDir: opts.outputDir });
+        return { stageId: `verify/${opts.iterateItemKey}`, exitCode: 0, durationMs: 1, outputDir: opts.outputDir };
+      },
+    };
+
+    await orch.run();
+
+    expect(seen.map((x) => x.item)).toEqual([
+      "BUG-HYP-R7-I4-H3",
+      "Long arbitrary task: reproduce with params and keep this verbatim",
+    ]);
+    expect(seen[0].key).toBe(itemKeyFor("BUG-HYP-R7-I4-H3"));
+    expect(seen[1].key).toBe(itemKeyFor("Long arbitrary task: reproduce with params and keep this verbatim"));
+    expect(seen[0].outputDir).toBe(path.join(outDir, "verify", seen[0].key!));
+  });
+
+  it("empty dispatch yields zero workers without crashing", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-dispatch-empty-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const outDir = path.join(dir, "out");
+    tmpDirs.push(dir);
+    mkdirSync(path.join(dir, "agents"), { recursive: true });
+    mkdirSync(path.join(dir, "skills", "test-skill"), { recursive: true });
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n");
+    writeFileSync(path.join(dir, "skills", "test-skill", "SKILL.md"), "skill\n");
+    writeFileSync(path.join(outDir, "decision.yaml"), "dispatch: []\n");
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: verify",
+      "    type: map",
+      "    skills: [test-skill]",
+      "    over:",
+      "      yaml: decision.yaml",
+      "      path: dispatch",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    const orch = new Orchestrator(spec, { work_dir: dir, output_dir: outDir }, { workDir: dir, outputDir: outDir, recursionLimit: 100, skipModelPrecheck: true });
+    let executed = 0;
+    (orch as any).executor = { execute: async () => { executed++; return { stageId: "verify", exitCode: 0, durationMs: 1, outputDir: outDir }; } };
+
+    await orch.run();
+
+    expect(executed).toBe(0);
+  });
+});
 
 describe("multi-target routing + join integration", () => {
   const tmpDirs: string[] = [];

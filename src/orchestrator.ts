@@ -6,13 +6,15 @@
  */
 
 import { setMaxListeners } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import yaml from "js-yaml";
 import { Annotation, StateGraph, Send, END, START } from "@langchain/langgraph";
 import { Checkpoint } from "./checkpoint.js";
 import { compare, parseLiteral } from "./condition.js";
 import { resolveModelEnvReferences } from "./env-interpolation.js";
 import { engineConfigFromEnv, type EngineConfig } from "./engine-config.js";
-import { Executor, type StageResult } from "./executor.js";
+import { Executor, itemKeyFor, type StageResult } from "./executor.js";
 import { Runner, loadEnvFile } from "./runner.js";
 import { precheckModels, resolveModelConfig, type ModelConfig } from "./model-config.js";
 import * as report from "./report.js";
@@ -69,7 +71,34 @@ function filterMapFiles(
     filter_passed: selected.length,
     filter_skipped: files.length - selected.length,
   });
-  return selected.map((f) => ({ _iterate_file: f }));
+  return selected.map((f) => ({ _iterate_file: f, _iterate_item: undefined }));
+}
+
+export function readYamlPathArray(rootDir: string, file: string, dotPath: string): string[] {
+  const sourcePath = path.join(rootDir, file);
+  if (!existsSync(sourcePath)) return [];
+
+  const raw = yaml.load(readFileSync(sourcePath, "utf-8"));
+  const value = readDotPath(raw, dotPath);
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`map over yaml path '${dotPath}' must be an array`);
+  }
+  for (const item of value) {
+    if (typeof item !== "string") {
+      throw new Error("map over yaml items must be strings");
+    }
+  }
+  return value;
+}
+
+function readDotPath(value: any, dotPath: string): any {
+  let cur = value;
+  for (const part of dotPath.split(".")) {
+    if (cur == null || typeof cur !== "object" || !(part in cur)) return undefined;
+    cur = cur[part];
+  }
+  return cur;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +147,10 @@ const FlowStateAnnotation = Annotation.Root({
   _iterate_file: Annotation<string>({
     reducer: (_a, b) => b,
     default: () => "",
+  }),
+  _iterate_item: Annotation<string | undefined>({
+    reducer: (_a, b) => b,
+    default: () => undefined,
   }),
   _stage_config: Annotation<Record<string, any>>({
     reducer: (_a, b) => b,
@@ -253,6 +286,7 @@ export class Orchestrator {
       _route_targets: {},
       fork_context: undefined,
       _iterate_file: "",
+      _iterate_item: undefined,
       _stage_config: {},
     };
 
@@ -544,12 +578,15 @@ export class Orchestrator {
     builder.addNode(workerId, async (state: FlowState) => {
       self.throwIfFlowTimedOut(stage.id);
       const iterateFile = state._iterate_file ?? "";
+      const iterateItem = state._iterate_item;
       const stageConfig = state._stage_config ?? {};
 
       // Determine worker label
       let label: string;
       if (stage.type === StageType.PARALLEL) {
         label = stage.tasks[stageConfig.task_index].id;
+      } else if (iterateItem !== undefined) {
+        label = itemKeyFor(iterateItem);
       } else {
         label = path.basename(iterateFile, path.extname(iterateFile));
       }
@@ -589,7 +626,9 @@ export class Orchestrator {
         try {
           result = await self.executor.execute(stage, {
             outputDir,
-            iterateFile,
+            iterateFile: iterateItem === undefined ? iterateFile : undefined,
+            iterateItem,
+            iterateItemKey: iterateItem !== undefined ? label : undefined,
             reuseSession: stage.session.reuse,
           });
           debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);
@@ -691,9 +730,15 @@ export class Orchestrator {
     }
 
     if (stage.type === StageType.MAP) {
-      const files = this.workspace.findFiles(stage.over ?? "");
+      const overSource = stage.overSource ?? (stage.over ? { kind: "glob" as const, pattern: stage.over } : undefined);
+      if (overSource?.kind === "yaml") {
+        return readYamlPathArray(this.workspace.root, overSource.file, overSource.path)
+          .map((item) => ({ _iterate_item: item, _iterate_file: "" }));
+      }
+
+      const files = this.workspace.findFiles(overSource?.pattern ?? "");
       if (!stage.filter) {
-        return files.map((f) => ({ _iterate_file: f }));
+        return files.map((f) => ({ _iterate_file: f, _iterate_item: undefined }));
       }
       return filterMapFiles(files, stage.filter, stage.id);
     }

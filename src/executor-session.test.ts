@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Executor } from "./executor.js";
+import { Executor, itemKeyFor } from "./executor.js";
 import { StageType, type FlowSpec } from "./spec.js";
 import { Workspace } from "./workspace.js";
 import type { RunConfig, RunResult } from "./runner.js";
@@ -56,6 +56,7 @@ function makeStage(overrides: Record<string, any> = {}): any {
     routes: [],
     tasks: [],
     over: undefined,
+    overSource: undefined,
     filter: undefined,
     stateExtract: undefined,
     ...overrides,
@@ -154,6 +155,14 @@ describe("Executor session reuse", () => {
     }
   });
 
+  it("derives bounded stable keys from arbitrary iterate_item strings", () => {
+    expect(itemKeyFor("BUG-HYP-R7-I4-H3")).toMatch(/^BUG-HYP-R7-I4-H3-[0-9a-f]{8}$/);
+    expect(itemKeyFor("  ///  ")).toMatch(/^[0-9a-f]{8}$/);
+    expect(itemKeyFor("A".repeat(200)).length).toBeLessThan(50);
+    expect(itemKeyFor("task A")).not.toBe(itemKeyFor("task B"));
+    expect(itemKeyFor("task A")).toBe(itemKeyFor("task A"));
+  });
+
   it("uses itemKey in stable map session paths", async () => {
     const dir = path.join(os.tmpdir(), `youngflow-exec-session-map-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     try {
@@ -167,6 +176,25 @@ describe("Executor session reuse", () => {
 
       expect(runner.configs[0].sessionFile).toBe(path.join(ws.sessionsDir, "scan", "A", "session.jsonl"));
       expect(runner.configs[1].sessionFile).toBe(path.join(ws.sessionsDir, "scan", "B", "session.jsonl"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses hashed iterate_item key and injects iterate_item into prompt", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-session-item-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+      const item = "BUG-HYP-R7-I4-H3: reproduce with params";
+      const key = itemKeyFor(item);
+
+      await executor.execute(makeStage({ prompt: "Item=${iterate_item}" }), { reuseSession: true, iterateItem: item });
+
+      expect(runner.configs[0].sessionFile).toBe(path.join(ws.sessionsDir, "scan", key, "session.jsonl"));
+      expect(runner.configs[0].task).toBe(`Item=${item}`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

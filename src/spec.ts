@@ -46,6 +46,10 @@ export interface StateExtractSpec {
   readonly rules: Record<string, Record<string, unknown>>;
 }
 
+export type OverSpec =
+  | { readonly kind: "glob"; readonly pattern: string }
+  | { readonly kind: "yaml"; readonly file: string; readonly path: string };
+
 export interface CompactionSpec {
   readonly enabled: boolean | undefined;
   readonly reserveTokens: number | undefined;
@@ -98,6 +102,7 @@ export interface StageSpec {
   readonly routes: readonly RouteSpec[];
   readonly tasks: readonly TaskSpec[];
   readonly over: string | undefined;
+  readonly overSource: OverSpec | undefined;
   readonly filter: FilterSpec | undefined;
   readonly stateExtract: StateExtractSpec | undefined;
 }
@@ -259,10 +264,17 @@ function parseStage(raw: Record<string, any>): StageSpec {
     env: raw.env ? { ...raw.env } : undefined,
     routes: (raw.routes ?? []).map(parseRoute),
     tasks: (raw.tasks ?? []).map(parseTask),
-    over: raw.over ?? undefined,
+    over: typeof raw.over === "string" ? raw.over : undefined,
+    overSource: parseOver(raw.over),
     filter: parseFilterSpec(raw.filter),
     stateExtract,
   };
+}
+
+function parseOver(raw: any): OverSpec | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === "string") return { kind: "glob", pattern: raw };
+  return { kind: "yaml", file: raw.yaml, path: raw.path };
 }
 
 function parseRoute(raw: Record<string, any>): RouteSpec {
@@ -437,6 +449,10 @@ function validateSemantics(
 
     if (stageType === "map" && !stage.over) {
       errors.push(`[semantic] ${prefix}: 'over' is required for type 'map'`);
+    }
+
+    if (stage.filter && typeof stage.over === "object" && stage.over !== null) {
+      errors.push(`[semantic] ${prefix}: filter is only supported with file-glob 'over'`);
     }
 
     if (stage.filter) {

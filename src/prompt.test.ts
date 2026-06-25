@@ -25,6 +25,7 @@ function makeStage(overrides: Record<string, any> = {}) {
     extensions: [],
     env: undefined,
     over: undefined,
+    overSource: undefined,
     stateExtract: undefined,
     ...overrides,
   } as any;
@@ -54,6 +55,12 @@ describe("render", () => {
     const stage = makeStage({ prompt: "Skills at ${skills}" });
     const result = render(stage, baseContext, "/flow/tasks");
     expect(result).toBe("Skills at /flow/skills");
+  });
+
+  it("substitutes iterate_item verbatim", () => {
+    const stage = makeStage({ prompt: "Process ${iterate_item}" });
+    const result = render(stage, { ...baseContext, iterateItem: "BUG-1: verify this exact task" }, "/flow/tasks");
+    expect(result).toBe("Process BUG-1: verify this exact task");
   });
 
   it("substitutes templates artifact dir", () => {

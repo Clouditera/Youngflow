@@ -308,6 +308,8 @@ defaults:
 
 #### map — 动态展开
 
+文件 glob 迭代（旧形态，完全兼容）：
+
 ```yaml
 - id: security-analyzer
   type: map
@@ -326,6 +328,21 @@ defaults:
     - to: deep-analyzer
 ```
 
+YAML/JSON 字符串列表迭代（适合 `decision.yaml.dispatch`）：
+
+```yaml
+- id: poc-verify
+  type: map
+  over:
+    yaml: decision.yaml                  # 相对 output_dir
+    path: dispatch                       # dotted path，值必须是字符串数组
+  skills: [poc-verifier]
+  prompt: |
+    本轮处理对象: ${iterate_item}        # dispatch 字符串原样注入
+```
+
+`over: {yaml, path}` 中每个字符串会生成一个 worker；字符串内容不限（ID、路径、自然语言任务均可），YoungFlow 不解析、不校验存在性。session/checkpoint/output identity 使用内容 hash 的短 key，保证同内容 resume 稳定且不受长度影响。缺失文件/缺失 path/空数组 = 0 worker；非数组或非字符串元素会 fail fast。`filter` 只支持 glob over，不支持 YAML 字符串列表。
+
 ### Stage 字段参考
 
 | 字段 | 类型 | 默认值 | 说明 |
@@ -343,8 +360,8 @@ defaults:
 | `extensions` | list | defaults.extensions | 本阶段加载的 extension |
 | `env` | object | — | 自定义环境变量（与 defaults.env 合并，stage 优先）|
 | `concurrency` | int | max_parallel | map 并发上限 |
-| `over` | string | — | map glob 模式（相对 output_dir） |
-| `filter` | object | — | map item 过滤；支持 YAML、JSON、Markdown frontmatter 的 `field` + `match` / `not_match` / `in` / `not_in` + `include_missing` |
+| `over` | string/object | — | map 迭代源；字符串为 glob（相对 output_dir），对象 `{yaml,path}` 为 YAML/JSON 字符串数组 |
+| `filter` | object | — | map item 过滤；仅支持 glob over；支持 YAML、JSON、Markdown frontmatter 的 `field` + `match` / `not_match` / `in` / `not_in` + `include_missing` |
 | `state` | object | — | 状态提取规则（见 [Routes 与 State](#routes-与-state)）|
 | `routes` | list | — | 条件路由（见 [Routes 与 State](#routes-与-state)）|
 | `tasks` | list | — | parallel 子任务列表 |

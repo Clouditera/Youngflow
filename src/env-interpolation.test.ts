@@ -27,6 +27,7 @@ function stage(id: string, model?: string): any {
     routes: [],
     tasks: [],
     over: undefined,
+    overSource: undefined,
     filter: undefined,
     stateExtract: undefined,
   };

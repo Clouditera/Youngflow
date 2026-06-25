@@ -6,6 +6,7 @@
  */
 
 import { mkdirSync, appendFileSync, existsSync, statSync, openSync, writeSync, closeSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const RAW_EVENT_MAX_BYTES = 64 * 1024;
@@ -274,6 +275,8 @@ export class Executor {
     opts: {
       outputDir?: string;
       iterateFile?: string;
+      iterateItem?: string;
+      iterateItemKey?: string;
       parentExtensions?: readonly string[];
       parentTools?: readonly string[];
       parentExcludeTools?: readonly string[];
@@ -284,9 +287,11 @@ export class Executor {
     let stageId = stage.id;
 
     // Map sub-tasks: qualify stage_id with item_key
-    const itemKey = opts.iterateFile
-      ? path.basename(opts.iterateFile, path.extname(opts.iterateFile))
-      : undefined;
+    const itemKey = opts.iterateItem !== undefined
+      ? (opts.iterateItemKey ?? itemKeyFor(opts.iterateItem))
+      : opts.iterateFile
+        ? path.basename(opts.iterateFile, path.extname(opts.iterateFile))
+        : undefined;
     if (itemKey) stageId = `${stage.id}/${itemKey}`;
 
     // Resolve output dir without creating per-stage directories eagerly.
@@ -304,6 +309,7 @@ export class Executor {
       outputDir: this.workspace.root,
       flowInputs: this.flowInputs,
       iterateFile: opts.iterateFile,
+      iterateItem: opts.iterateItem,
       artifacts: this.buildArtifactVars(),
     };
 
@@ -444,6 +450,19 @@ export class Executor {
     }
     return resolved;
   }
+}
+
+export function itemKeyFor(item: string): string {
+  const hash = createHash("sha1").update(item).digest("hex").slice(0, 8);
+  const slug = safeSegment(item.slice(0, 32));
+  return slug ? `${slug}-${hash}` : hash;
+}
+
+function safeSegment(value: string): string {
+  let s = value.replace(/\//g, "_").trim();
+  s = s.replace(/[^A-Za-z0-9._-]+/g, "-");
+  s = s.replace(/^[-._]+|[-._]+$/g, "");
+  return s;
 }
 
 function isStageSpec(stage: StageSpec | TaskSpec): stage is StageSpec {

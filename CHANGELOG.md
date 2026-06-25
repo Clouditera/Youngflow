@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0 - 2026-06-25
+
+### Added
+- Add map `over: { yaml, path }` string-list iteration for dispatch worklists such as `decision.yaml.dispatch`, injecting each opaque string as `${iterate_item}` with stable hash-based worker identity.
+
 ## 0.7.0 - 2026-06-25
 
 ### Added

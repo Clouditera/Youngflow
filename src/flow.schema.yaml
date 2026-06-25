@@ -215,8 +215,20 @@ $defs:
 
       # map 专用
       over:
-        type: string
-        description: Glob 模式（相对于 output_dir）
+        oneOf:
+          - type: string
+            description: Glob 模式（相对于 output_dir）
+          - type: object
+            required: [yaml, path]
+            properties:
+              yaml:
+                type: string
+                description: YAML/JSON 文件路径（相对于 output_dir）
+              path:
+                type: string
+                description: 指向字符串数组的 dotted path
+            additionalProperties: false
+        description: map 迭代源；字符串为文件 glob，对象为 YAML/JSON 字符串列表
       filter:
         $ref: "#/$defs/filter"
       concurrency:

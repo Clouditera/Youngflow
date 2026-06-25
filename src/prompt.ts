@@ -2,7 +2,7 @@
  * Prompt rendering: template variable substitution + task.md assembly.
  *
  * Variables:
- *   ${work_dir}, ${output_dir}, ${iterate_file}  — engine built-ins
+ *   ${work_dir}, ${output_dir}, ${iterate_file}, ${iterate_item}  — engine built-ins
  *   ${flow_inputs.xxx}                           — from flow.yaml inputs
  *   ${agents}, ${skills}, ${tasks}, etc.         — artifact dirs
  */
@@ -16,6 +16,7 @@ export interface PromptContext {
   readonly outputDir: string;
   readonly flowInputs: Record<string, any>;
   readonly iterateFile?: string;
+  readonly iterateItem?: string;
   readonly artifacts?: Record<string, string>;
 }
 
@@ -67,6 +68,9 @@ function buildVars(context: PromptContext): Record<string, string> {
 
   if (context.iterateFile) {
     vars["iterate_file"] = context.iterateFile;
+  }
+  if (context.iterateItem !== undefined) {
+    vars["iterate_item"] = context.iterateItem;
   }
 
   // Artifact dirs
