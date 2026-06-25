@@ -46,9 +46,16 @@ export interface StateExtractSpec {
   readonly rules: Record<string, Record<string, unknown>>;
 }
 
+export interface CompactionSpec {
+  readonly enabled: boolean | undefined;
+  readonly reserveTokens: number | undefined;
+  readonly keepRecentTokens: number | undefined;
+}
+
 export interface SessionSpec {
   readonly reuse: boolean;
   readonly prompt: string | undefined;
+  readonly compactAt: number | undefined;
 }
 
 export interface TaskSpec {
@@ -113,6 +120,7 @@ export interface FlowSpec {
   readonly defaultAgent: string | undefined;
   readonly defaultTools: readonly string[] | undefined;
   readonly defaultExcludeTools: readonly string[] | undefined;
+  readonly compaction: CompactionSpec | undefined;
   readonly defaultExtensions: readonly string[];
   readonly defaultEnv: Record<string, string>;
   readonly inputs: readonly FlowInputSpec[];
@@ -161,6 +169,7 @@ export function parseFlow(
   const defaultAgent = defaults.agent ?? undefined;
   const defaultTools = defaults.tools ? [...defaults.tools] : undefined;
   const defaultExcludeTools = defaults.exclude_tools ? [...defaults.exclude_tools] : undefined;
+  const compaction = parseCompaction(defaults.compaction);
   const defaultExtensions: string[] = defaults.extensions
     ? [...defaults.extensions]
     : [];
@@ -200,6 +209,7 @@ export function parseFlow(
     defaultAgent,
     defaultTools,
     defaultExcludeTools,
+    compaction,
     defaultExtensions,
     defaultEnv,
     inputs,
@@ -263,10 +273,20 @@ function parseRoute(raw: Record<string, any>): RouteSpec {
   };
 }
 
+function parseCompaction(raw: Record<string, any> | undefined): CompactionSpec | undefined {
+  if (!raw) return undefined;
+  return {
+    enabled: raw.enabled ?? undefined,
+    reserveTokens: raw.reserve_tokens ?? undefined,
+    keepRecentTokens: raw.keep_recent_tokens ?? undefined,
+  };
+}
+
 function parseSession(raw: Record<string, any> | undefined): SessionSpec {
   return {
     reuse: raw?.reuse ?? false,
     prompt: raw?.prompt ?? undefined,
+    compactAt: raw?.compact_at ?? undefined,
   };
 }
 

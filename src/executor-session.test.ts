@@ -26,6 +26,7 @@ function makeSpec(dir: string, overrides: Partial<FlowSpec> = {}): FlowSpec {
     defaultAgent: undefined,
     defaultTools: undefined,
     defaultExcludeTools: undefined,
+    compaction: undefined,
     defaultExtensions: [],
     defaultEnv: {},
     inputs: [],
@@ -42,7 +43,7 @@ function makeStage(overrides: Record<string, any> = {}): any {
     skills: [],
     task: undefined,
     prompt: "First ${work_dir}",
-    session: { reuse: false, prompt: undefined },
+    session: { reuse: false, prompt: undefined, compactAt: undefined },
     tools: undefined,
     excludeTools: undefined,
     timeout: 1800,
@@ -80,6 +81,7 @@ function ok(sessionFile?: string): RunResult {
 }
 
 class CapturingRunner {
+  modelConfig = { compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts" };
   configs: RunConfig[] = [];
   async run(config: RunConfig): Promise<RunResult> {
     this.configs.push(config);
@@ -135,7 +137,7 @@ describe("Executor session reuse", () => {
       const stage = makeStage({
         task: "task.md",
         prompt: "First ${flow_inputs.target}",
-        session: { reuse: true, prompt: "Continue ${flow_inputs.target}" },
+        session: { reuse: true, prompt: "Continue ${flow_inputs.target}", compactAt: undefined },
       });
 
       await executor.execute(stage, { reuseSession: true });
@@ -278,6 +280,73 @@ describe("Executor session reuse", () => {
       await executor.execute(makeStage({ id: "task-a" }), { parentExcludeTools: ["coverage"] });
 
       expect(runner.configs[0].excludeTools).toEqual(["coverage"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("injects compaction extension and threshold env when session compact_at is configured", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-compact-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ session: { reuse: true, prompt: undefined, compactAt: 0.7 } }));
+
+      expect(runner.configs[0].extensions).toContain("/tmp/.pi-agent/yf-compaction.ts");
+      expect(runner.configs[0].envExtra.YOUNGFLOW_COMPACT_AT).toBe("0.7");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inject compaction extension when compact_at is omitted", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-no-compact-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage());
+
+      expect(runner.configs[0].extensions).not.toContain("/tmp/.pi-agent/yf-compaction.ts");
+      expect(runner.configs[0].envExtra.YOUNGFLOW_COMPACT_AT).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parallel task inherits parent compact_at when task compact_at is omitted", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-compact-parent-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "task-a" }), { parentCompactAt: 0.6 });
+
+      expect(runner.configs[0].extensions).toContain("/tmp/.pi-agent/yf-compaction.ts");
+      expect(runner.configs[0].envExtra.YOUNGFLOW_COMPACT_AT).toBe("0.6");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parallel task own compact_at overrides parent compact_at", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-compact-task-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "task-a", session: { reuse: false, prompt: undefined, compactAt: 0.8 } }), { parentCompactAt: 0.6 });
+
+      expect(runner.configs[0].envExtra.YOUNGFLOW_COMPACT_AT).toBe("0.8");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

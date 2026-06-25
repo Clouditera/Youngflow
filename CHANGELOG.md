@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 - 2026-06-25
+
+### Added
+- Add `session.compact_at` to actively trigger pi session compaction from a YoungFlow-bundled extension when context usage crosses a configured window fraction.
+- Add `defaults.compaction` to tune pi native auto-compaction settings via `.pi-agent/settings.json`.
+
 ## 0.6.0 - 2026-06-23
 
 ### Added

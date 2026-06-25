@@ -95,6 +95,7 @@ describe("Runner command construction", () => {
         modelString: "deepseek/deepseek-v4-pro",
         thinkingLevel: "medium",
         agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
         envVars: {},
       },
       engineConfig: {
@@ -119,6 +120,7 @@ describe("Runner command construction", () => {
       modelConfig: {
         modelString: "zai/glm-5.1",
         agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
         envVars: {},
       },
       engineConfig: {
@@ -139,6 +141,7 @@ describe("Runner command construction", () => {
       modelConfig: {
         modelString: "zai/glm-5.1",
         agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
         envVars: {},
       },
       engineConfig: {
@@ -159,6 +162,7 @@ describe("Runner command construction", () => {
       modelConfig: {
         modelString: "zai/glm-5.1",
         agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
         envVars: {},
       },
       engineConfig: {
@@ -179,6 +183,7 @@ describe("Runner command construction", () => {
       modelConfig: {
         modelString: "zai/glm-5.1",
         agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
         envVars: {},
       },
       engineConfig: {
@@ -199,6 +204,7 @@ describe("Runner command construction", () => {
       modelConfig: {
         modelString: "zai/glm-5.1",
         agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
         envVars: {},
       },
       engineConfig: {

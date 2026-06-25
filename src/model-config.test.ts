@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { precheckModels, resolveModelConfig, stripEffortSuffix } from "./model-config.js";
+import { precheckModels, resolveModelConfig, stripEffortSuffix, youngflowCompactionExtension } from "./model-config.js";
 
 function tmpDir(name: string): string {
   return path.join(os.tmpdir(), `youngflow-model-config-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -55,6 +55,7 @@ describe("resolveModelConfig", () => {
     try {
       const config = resolveModelConfig({ ANTHROPIC_API_KEY: "secret" }, "anthropic/claude-sonnet-4-5", dir);
       expect(readJson(path.join(config.agentDir, "models.json"))).toEqual({ providers: {} });
+      expect(readJson(path.join(config.agentDir, "settings.json"))).toEqual({});
       expect(readJson(path.join(config.agentDir, "auth.json"))).toEqual({});
     } finally {
       if (prevGlobalAuth === undefined) delete process.env.PI_GLOBAL_AUTH_JSON;
@@ -100,7 +101,59 @@ describe("resolveModelConfig", () => {
     }
   });
 
-  it("preserves settings.json and agents symlink", () => {
+  it("writes pi compaction settings and materializes import-free bundled extension", () => {
+    const dir = tmpDir("compaction");
+    try {
+      const config = resolveModelConfig({}, "anthropic/claude", dir, undefined, undefined, {
+        enabled: true,
+        reserveTokens: 40000,
+        keepRecentTokens: 12000,
+      });
+
+      expect(readJson(path.join(config.agentDir, "settings.json"))).toEqual({
+        compaction: {
+          enabled: true,
+          reserveTokens: 40000,
+          keepRecentTokens: 12000,
+        },
+      });
+      expect(config.compactionExtensionPath).toBe(path.join(config.agentDir, "yf-compaction.ts"));
+      const extSource = readFileSync(config.compactionExtensionPath, "utf-8");
+      expect(extSource).toContain("export default function youngflowCompactionExtension");
+      expect(extSource).not.toMatch(/^import\s/m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs bundled compaction extension only when usage crosses threshold", () => {
+    const prev = process.env.YOUNGFLOW_COMPACT_AT;
+    try {
+      process.env.YOUNGFLOW_COMPACT_AT = "0.7";
+      let handler: ((event: any, ctx: any) => void) | undefined;
+      const pi = { on: (_event: string, cb: any) => { handler = cb; } };
+      youngflowCompactionExtension(pi);
+
+      let compactCalls = 0;
+      const ctx = {
+        getContextUsage: () => ({ tokens: 700, contextWindow: 1000 }),
+        compact: (_opts: any) => { compactCalls++; },
+      };
+      handler?.({}, { ...ctx, getContextUsage: () => ({ tokens: 699, contextWindow: 1000 }) });
+      expect(compactCalls).toBe(0);
+      handler?.({}, { ...ctx, getContextUsage: () => ({ tokens: null, contextWindow: 1000 }) });
+      expect(compactCalls).toBe(0);
+      handler?.({}, ctx);
+      expect(compactCalls).toBe(1);
+      handler?.({}, ctx);
+      expect(compactCalls).toBe(1);
+    } finally {
+      if (prev === undefined) delete process.env.YOUNGFLOW_COMPACT_AT;
+      else process.env.YOUNGFLOW_COMPACT_AT = prev;
+    }
+  });
+
+  it("writes settings.json and agents symlink", () => {
     const dir = tmpDir("agents");
     try {
       const agentsDir = path.join(dir, "agents-src");
