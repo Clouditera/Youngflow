@@ -233,13 +233,26 @@ stages:
     首次完整分析 ${work_dir}
   session:
     reuse: true
+    compact_at: 0.7      # 可选：上下文达到 70% 窗口时主动触发 pi compact
     prompt: |
       在上次基础上继续，重点检查新增线索
+```
+
+也可用 flow 级 defaults 调整 pi 内置自动压缩：
+
+```yaml
+defaults:
+  compaction:
+    enabled: true
+    reserve_tokens: 40000      # 越大越早触发 pi 自动压缩
+    keep_recent_tokens: 20000
 ```
 
 行为：
 - `session.reuse: true` 使用稳定 session 路径；single 按 stage id，map 按 `${iterate_file}` 的 item key，parallel 按子任务 id 复用。
 - 第一次执行仍发送正常 `task.md + prompt`；复用回合如果配置 `session.prompt`，只发送该续接消息（支持 `${...}` 变量），不重发 task。
+- `session.compact_at` 会加载 YoungFlow 内置 pi extension，在 `turn_end` 按 `tokens/contextWindow` 阈值主动调用 `ctx.compact()`；不要求 `reuse: true`，但对复用循环最有价值。
+- `defaults.compaction` 写入 `.pi-agent/settings.json`，用于调节 pi 原生自动压缩的 `enabled` / `reserveTokens` / `keepRecentTokens`。
 - 仅同一次运行内复用；`--continue` 归档 `.youngflow/sessions/` 后会自然开启新 session。
 
 ### Stage 类型

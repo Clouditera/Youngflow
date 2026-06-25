@@ -278,6 +278,7 @@ export class Executor {
       parentExtensions?: readonly string[];
       parentTools?: readonly string[];
       parentExcludeTools?: readonly string[];
+      parentCompactAt?: number;
       reuseSession?: boolean;
     } = {},
   ): Promise<StageResult> {
@@ -345,6 +346,14 @@ export class Executor {
       extNames = this.spec.defaultExtensions;
     }
     const extPaths = this.resolveExtensions(extNames);
+    const effectiveCompactAt = stage.session.compactAt ?? opts.parentCompactAt;
+    if (effectiveCompactAt != null) {
+      const compactionExt = this.runner.modelConfig.compactionExtensionPath;
+      if (!compactionExt) {
+        throw new Error("Compaction extension path is unavailable");
+      }
+      extPaths.push(compactionExt);
+    }
 
     // Stage env vars
     const envExtra: Record<string, string> = {
@@ -357,6 +366,9 @@ export class Executor {
     };
     const stageEnv = isStageSpec(stage) ? stage.env : undefined;
     if (stageEnv) Object.assign(envExtra, stageEnv);
+    if (effectiveCompactAt != null) {
+      envExtra.YOUNGFLOW_COMPACT_AT = String(effectiveCompactAt);
+    }
     if (opts.iterateFile) {
       envExtra.YOUNGFLOW_ITERATE_FILE = opts.iterateFile;
     }

@@ -115,6 +115,48 @@ describe("parseFlow", () => {
     expect(spec.defaultExcludeTools).toEqual(["coverage"]);
   });
 
+  it("parses default compaction settings", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "  compaction:",
+      "    enabled: true",
+      "    reserve_tokens: 40000",
+      "    keep_recent_tokens: 12000",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.compaction).toEqual({
+      enabled: true,
+      reserveTokens: 40000,
+      keepRecentTokens: 12000,
+    });
+  });
+
+  it("leaves default compaction undefined when omitted", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.compaction).toBeUndefined();
+  });
+
   it("parses stage tools allowlist", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);
@@ -231,6 +273,43 @@ describe("parseFlow", () => {
     expect(spec.stages[0].session.prompt).toBe("Continue ${work_dir}");
   });
 
+  it("parses session compact_at", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    session:",
+      "      compact_at: 0.7",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages[0].session.compactAt).toBe(0.7);
+  });
+
+  it("rejects invalid session compact_at", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [test-skill]",
+      "    session:",
+      "      compact_at: 1.5",
+    ].join("\n"));
+
+    expect(() => parseFlow(flowPath)).toThrow(/compact_at/);
+  });
+
   it("defaults omitted session config", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);
@@ -245,7 +324,7 @@ describe("parseFlow", () => {
     ].join("\n"));
 
     const spec = parseFlow(flowPath);
-    expect(spec.stages[0].session).toEqual({ reuse: false, prompt: undefined });
+    expect(spec.stages[0].session).toEqual({ reuse: false, prompt: undefined, compactAt: undefined });
   });
 
   it("parses parallel task session prompt", () => {
@@ -267,7 +346,7 @@ describe("parseFlow", () => {
     ].join("\n"));
 
     const spec = parseFlow(flowPath);
-    expect(spec.stages[0].tasks[0].session).toEqual({ reuse: false, prompt: "Continue left" });
+    expect(spec.stages[0].tasks[0].session).toEqual({ reuse: false, prompt: "Continue left", compactAt: undefined });
   });
 
   it("leaves flow-level timeout undefined when omitted", () => {

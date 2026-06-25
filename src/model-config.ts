@@ -22,11 +22,13 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { debug } from "./logger.js";
+import type { CompactionSpec } from "./spec.js";
 
 export interface ModelConfig {
   readonly modelString: string;
   readonly thinkingLevel: string | undefined;
   readonly agentDir: string;
+  readonly compactionExtensionPath: string;
   readonly envVars: Record<string, string>;
 }
 
@@ -36,14 +38,17 @@ export function resolveModelConfig(
   agentDirBase?: string,
   agentsDir?: string,
   modelsJsonPath?: string,
+  compaction?: CompactionSpec,
   inheritGlobalAuth = true,
 ): ModelConfig {
-  const agentDir = createAgentDir({
+  const agentDirInfo = createAgentDir({
     base: agentDirBase,
     agentsDir,
     modelsJsonPath,
+    compaction,
     inheritGlobalAuth,
   });
+  const agentDir = agentDirInfo.agentDir;
 
   if (inheritGlobalAuth === false) {
     debug("model_config", "info", "Restricted model config initialized");
@@ -62,6 +67,7 @@ export function resolveModelConfig(
     modelString: defaultModel,
     thinkingLevel: undefined,
     agentDir,
+    compactionExtensionPath: agentDirInfo.compactionExtensionPath,
     envVars: {
       ...env,
       PI_CODING_AGENT_DIR: agentDir,
@@ -73,8 +79,9 @@ function createAgentDir(opts: {
   base?: string;
   agentsDir?: string;
   modelsJsonPath?: string;
+  compaction?: CompactionSpec;
   inheritGlobalAuth?: boolean;
-}): string {
+}): { agentDir: string; compactionExtensionPath: string } {
   const agentDir = path.join(opts.base ?? process.cwd(), ".pi-agent");
   mkdirSync(agentDir, { recursive: true, mode: opts.inheritGlobalAuth === false ? 0o700 : undefined });
 
@@ -97,9 +104,14 @@ function createAgentDir(opts: {
   }
 
   const settingsPath = path.join(agentDir, "settings.json");
-  if (!existsSync(settingsPath)) {
-    writeFileSync(settingsPath, "{}", "utf-8");
-  }
+  writeFileSync(
+    settingsPath,
+    JSON.stringify(buildPiSettings(opts.compaction), null, 2) + "\n",
+    "utf-8",
+  );
+
+  const compactionExtensionPath = path.join(agentDir, "yf-compaction.ts");
+  writeFileSync(compactionExtensionPath, COMPACTION_EXTENSION_SOURCE, "utf-8");
 
   if (opts.inheritGlobalAuth === false) {
     chmodSync(agentDir, 0o700);
@@ -120,8 +132,39 @@ function createAgentDir(opts: {
     debug("model_config", "debug", "Linked agents: %s → %s", linkPath, opts.agentsDir);
   }
 
-  return agentDir;
+  return { agentDir, compactionExtensionPath };
 }
+
+function buildPiSettings(compaction?: CompactionSpec): Record<string, unknown> {
+  if (!compaction) return {};
+  const out: Record<string, unknown> = {};
+  const c: Record<string, unknown> = {};
+  if (compaction.enabled !== undefined) c.enabled = compaction.enabled;
+  if (compaction.reserveTokens !== undefined) c.reserveTokens = compaction.reserveTokens;
+  if (compaction.keepRecentTokens !== undefined) c.keepRecentTokens = compaction.keepRecentTokens;
+  out.compaction = c;
+  return out;
+}
+
+export function youngflowCompactionExtension(pi: any): void {
+  const threshold = Number(process.env.YOUNGFLOW_COMPACT_AT || "0");
+  let compacting = false;
+
+  pi.on("turn_end", (_event: any, ctx: any) => {
+    if (!(threshold > 0) || compacting) return;
+    const usage = ctx.getContextUsage?.();
+    if (!usage || usage.tokens == null || !usage.contextWindow || typeof ctx.compact !== "function") return;
+    if (usage.tokens / usage.contextWindow >= threshold) {
+      compacting = true;
+      ctx.compact({
+        onComplete: () => { compacting = false; },
+        onError: () => { compacting = false; },
+      });
+    }
+  });
+}
+
+export const COMPACTION_EXTENSION_SOURCE = `export default ${youngflowCompactionExtension.toString()};\n`;
 
 /**
  * Read the user's global pi auth.json (subscription OAuth tokens) so the

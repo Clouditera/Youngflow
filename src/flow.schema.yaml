@@ -79,6 +79,22 @@ properties:
           type: string
         minItems: 1
         description: 默认禁用的工具（denylist），在 tools allowlist 之后生效
+      compaction:
+        type: object
+        description: pi 内置会话压缩配置；写入 .pi-agent/settings.json
+        properties:
+          enabled:
+            type: boolean
+            description: 是否启用 pi 内置自动压缩
+          reserve_tokens:
+            type: integer
+            minimum: 1
+            description: 距离上下文窗口剩余多少 token 时触发自动压缩（越大越早压缩）
+          keep_recent_tokens:
+            type: integer
+            minimum: 1
+            description: 压缩后保留的最近 token 数
+        additionalProperties: false
       extensions:
         type: array
         items:
@@ -284,6 +300,11 @@ $defs:
       prompt:
         type: string
         description: 复用回合发送的续接消息（替代首次的 task+prompt），支持 ${...} 插值
+      compact_at:
+        type: number
+        minimum: 0
+        maximum: 1
+        description: YoungFlow 主动压缩阈值；当上下文 tokens/contextWindow 达到该比例时触发 pi compact
     additionalProperties: false
 
   route:

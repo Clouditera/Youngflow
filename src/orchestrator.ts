@@ -249,6 +249,7 @@ export class Orchestrator {
       restrictedPrepare ? prepareControlDir : resolvedSpec.flowDir,
       resolvedSpec.agentsDir,
       resolvedSpec.modelsJsonPath,
+      resolvedSpec.compaction,
       !restrictedPrepare,
     );
     if (!opts.skipModelPrecheck) {
@@ -625,6 +626,7 @@ export class Orchestrator {
             parentExtensions: stage.extensions,
             parentTools: stage.tools,
             parentExcludeTools: stage.excludeTools,
+            parentCompactAt: stage.session.compactAt,
             reuseSession: stage.session.reuse,
           });
           debug("orchestrator", "info", "[%s/%s] done: exit=%s duration=%sms", stage.id, label, result.exitCode, result.durationMs);

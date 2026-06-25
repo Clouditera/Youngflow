@@ -12,7 +12,7 @@ function makeStage(overrides: Record<string, any> = {}) {
     skills: [],
     task: undefined as string | undefined,
     prompt: "",
-    session: { reuse: false, prompt: undefined },
+    session: { reuse: false, prompt: undefined, compactAt: undefined },
     tools: undefined,
     excludeTools: undefined,
     timeout: 1800,
