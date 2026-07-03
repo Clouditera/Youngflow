@@ -121,6 +121,7 @@ describe("resolveModelConfig", () => {
       const extSource = readFileSync(config.compactionExtensionPath, "utf-8");
       expect(extSource).toContain("export default function youngflowCompactionExtension");
       expect(extSource).not.toMatch(/^import\s/m);
+      expect(extSource).not.toMatch(/:\s*any\b|\):\s*void\b/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -149,7 +149,23 @@ export function youngflowCompactionExtension(pi: any): void {
   });
 }
 
-export const COMPACTION_EXTENSION_SOURCE = `export default ${youngflowCompactionExtension.toString()};\n`;
+export const COMPACTION_EXTENSION_SOURCE = `export default function youngflowCompactionExtension(pi) {
+  const threshold = Number(process.env.YOUNGFLOW_COMPACT_AT || "0");
+  let compacting = false;
+
+  pi.on("turn_end", (_event, ctx) => {
+    if (!(threshold > 0) || compacting) return;
+    const usage = ctx.getContextUsage?.();
+    if (!usage || usage.tokens == null || !usage.contextWindow || typeof ctx.compact !== "function") return;
+    if (usage.tokens / usage.contextWindow >= threshold) {
+      compacting = true;
+      ctx.compact({
+        onComplete: () => { compacting = false; },
+        onError: () => { compacting = false; },
+      });
+    }
+  });
+}\n`;
 
 /**
  * Read the user's global pi auth.json (subscription OAuth tokens) so the
