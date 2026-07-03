@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 - 2026-07-03
+
+### Changed
+- Make the emitted `COMPACTION_EXTENSION_SOURCE` string the single source of truth for the bundled pi compaction extension and drop the parallel TypeScript function, removing `Function.prototype.toString()` transpiler dependence and eliminating logic drift; the extension behavior test now executes the emitted source directly.
+
 ## 0.8.0 - 2026-06-25
 
 ### Added

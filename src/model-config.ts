@@ -131,24 +131,16 @@ function buildPiSettings(compaction?: CompactionSpec): Record<string, unknown> {
   return out;
 }
 
-export function youngflowCompactionExtension(pi: any): void {
-  const threshold = Number(process.env.YOUNGFLOW_COMPACT_AT || "0");
-  let compacting = false;
-
-  pi.on("turn_end", (_event: any, ctx: any) => {
-    if (!(threshold > 0) || compacting) return;
-    const usage = ctx.getContextUsage?.();
-    if (!usage || usage.tokens == null || !usage.contextWindow || typeof ctx.compact !== "function") return;
-    if (usage.tokens / usage.contextWindow >= threshold) {
-      compacting = true;
-      ctx.compact({
-        onComplete: () => { compacting = false; },
-        onError: () => { compacting = false; },
-      });
-    }
-  });
-}
-
+/**
+ * Single source of truth for the bundled pi compaction extension.
+ *
+ * This is the exact text materialized to `.pi-agent/yf-compaction.ts` and loaded by pi, so it
+ * MUST be plain JavaScript (no TypeScript annotations, no imports, no closure/module references —
+ * only params, `process.env`, and globals). Do not reintroduce a stringified TS function via
+ * `Function.prototype.toString()`: its output depends on the transpiler (tsx keeps annotations,
+ * esbuild strips them), which previously emitted invalid TS into the .js extension. The behavior
+ * of this source is exercised in model-config.test.ts by executing this string directly.
+ */
 export const COMPACTION_EXTENSION_SOURCE = `export default function youngflowCompactionExtension(pi) {
   const threshold = Number(process.env.YOUNGFLOW_COMPACT_AT || "0");
   let compacting = false;

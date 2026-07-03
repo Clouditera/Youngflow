@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { precheckModels, resolveModelConfig, stripEffortSuffix, youngflowCompactionExtension } from "./model-config.js";
+import { precheckModels, resolveModelConfig, stripEffortSuffix, COMPACTION_EXTENSION_SOURCE } from "./model-config.js";
 
 function tmpDir(name: string): string {
   return path.join(os.tmpdir(), `youngflow-model-config-${name}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -128,12 +128,16 @@ describe("resolveModelConfig", () => {
   });
 
   it("runs bundled compaction extension only when usage crosses threshold", () => {
+    // Execute the emitted source string itself (what pi actually loads), not a
+    // separate TS function — this guarantees no drift between tested logic and shipped extension.
+    const factory = new Function(`return (${COMPACTION_EXTENSION_SOURCE.replace(/^export default /, "")})`);
+    const extension = factory() as (pi: any) => void;
     const prev = process.env.YOUNGFLOW_COMPACT_AT;
     try {
       process.env.YOUNGFLOW_COMPACT_AT = "0.7";
       let handler: ((event: any, ctx: any) => void) | undefined;
       const pi = { on: (_event: string, cb: any) => { handler = cb; } };
-      youngflowCompactionExtension(pi);
+      extension(pi);
 
       let compactCalls = 0;
       const ctx = {
