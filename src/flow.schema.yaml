@@ -170,6 +170,10 @@ $defs:
         additionalProperties:
           type: string
         description: 本阶段自定义环境变量（与 defaults.env 合并，stage 优先）
+      execution_policy:
+        type: string
+        enum: [prepare-restricted]
+        description: 受信任的进程级执行策略；对argv/env/session/retry做fail-closed约束
 
       # parallel 专用
       tasks:

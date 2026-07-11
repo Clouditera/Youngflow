@@ -7,6 +7,7 @@
  */
 
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -35,11 +36,13 @@ export function resolveModelConfig(
   agentDirBase?: string,
   agentsDir?: string,
   modelsJsonPath?: string,
+  inheritGlobalAuth = true,
 ): ModelConfig {
   const agentDir = createAgentDir({
     base: agentDirBase,
     agentsDir,
     modelsJsonPath,
+    inheritGlobalAuth,
   });
 
   debug(
@@ -66,9 +69,10 @@ function createAgentDir(opts: {
   base?: string;
   agentsDir?: string;
   modelsJsonPath?: string;
+  inheritGlobalAuth?: boolean;
 }): string {
   const agentDir = path.join(opts.base ?? process.cwd(), ".pi-agent");
-  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(agentDir, { recursive: true, mode: opts.inheritGlobalAuth === false ? 0o700 : undefined });
 
   // Inherit subscription credentials (OAuth: ChatGPT/Codex, Claude Pro/Max,
   // Copilot) from the user's global pi agent dir. Pi stores these in
@@ -76,7 +80,7 @@ function createAgentDir(opts: {
   // Without this, only env-key providers work; builtin subscription models
   // (e.g. openai-codex/gpt-5.5) fail the precheck. Empty/missing global auth
   // yields {} — identical to the previous behavior.
-  writeFileSync(path.join(agentDir, "auth.json"), readGlobalAuth(), "utf-8");
+  writeFileSync(path.join(agentDir, "auth.json"), opts.inheritGlobalAuth === false ? "{}" : readGlobalAuth(), { encoding: "utf-8", mode: 0o600 });
 
   if (opts.modelsJsonPath) {
     copyFileSync(opts.modelsJsonPath, path.join(agentDir, "models.json"));
@@ -91,6 +95,13 @@ function createAgentDir(opts: {
   const settingsPath = path.join(agentDir, "settings.json");
   if (!existsSync(settingsPath)) {
     writeFileSync(settingsPath, "{}", "utf-8");
+  }
+
+  if (opts.inheritGlobalAuth === false) {
+    chmodSync(agentDir, 0o700);
+    chmodSync(path.join(agentDir, "auth.json"), 0o600);
+    chmodSync(path.join(agentDir, "models.json"), 0o600);
+    chmodSync(settingsPath, 0o600);
   }
 
   if (opts.agentsDir && existsSync(opts.agentsDir) && statSync(opts.agentsDir).isDirectory()) {

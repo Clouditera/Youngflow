@@ -20,7 +20,7 @@ import {
   type RunConfig,
   type RunResult,
   Runner,
-  formatToolCallDisplay,
+  formatRestrictedToolCallDisplay,
 } from "./runner.js";
 
 import type { FlowSpec, StageSpec, TaskSpec } from "./spec.js";
@@ -75,7 +75,7 @@ export class StageEventLogger implements EventHandler {
     args: Record<string, any>,
     elapsedS: number,
   ): void {
-    this.writeLog(`  [${elapsedS.toFixed(0)}s] ${formatToolCallDisplay(toolName, args)}`);
+    this.writeLog(`  [${elapsedS.toFixed(0)}s] ${formatRestrictedToolCallDisplay(toolName, args)}`);
 
   }
 
@@ -86,7 +86,8 @@ export class StageEventLogger implements EventHandler {
     elapsedS: number,
   ): void {
     if (isError) {
-      this.writeLog(`  [${elapsedS.toFixed(0)}s] ❌ ${toolName}: ${result}`);
+      const safeResult = toolName === "submit_plan" ? "validation failed (<redacted>)" : result;
+      this.writeLog(`  [${elapsedS.toFixed(0)}s] ❌ ${toolName}: ${safeResult}`);
     }
   }
 
@@ -330,12 +331,21 @@ export class Executor {
       envExtra.YOUNGFLOW_ITERATE_FILE = opts.iterateFile;
     }
 
-    // Session file
-    const sessionFile = this.workspace.sessionPath(stage.id, itemKey);
+    const executionPolicy = isStageSpec(stage) ? stage.executionPolicy : undefined;
+    let restrictedWorkDir: string | undefined;
+    if (executionPolicy === "prepare-restricted") {
+      const controlDir = process.env.PREPARE_CONTROL_DIR;
+      if (!controlDir) throw new Error("prepare-restricted requires PREPARE_CONTROL_DIR");
+      restrictedWorkDir = path.join(controlDir, "runtime");
+      mkdirSync(restrictedWorkDir, { recursive: true, mode: 0o700 });
+    }
+
+    // Restricted Prepare never creates or resumes a pi session.
+    const sessionFile = executionPolicy ? undefined : this.workspace.sessionPath(stage.id, itemKey);
 
     // Event handler
     const handler = new StageEventLogger(this.workspace.logsDir, stageId, {
-      traceEvents: this.traceEvents,
+      traceEvents: executionPolicy === "prepare-restricted" ? false : this.traceEvents,
     });
 
     let result;
@@ -353,7 +363,8 @@ export class Executor {
           envExtra,
           stageId,
           sessionFile,
-          workDir: this.workDir,
+          workDir: restrictedWorkDir ?? this.workDir,
+          executionPolicy,
           abortSignal: this.abortSignal,
         },
         handler,

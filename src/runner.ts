@@ -5,10 +5,11 @@
  * Event handling is delegated to an EventHandler interface.
  */
 
+import { createHash } from "node:crypto";
 import { setMaxListeners } from "node:events";
 setMaxListeners(0);
 import { spawn, execSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 const { globSync } = fg;
@@ -59,6 +60,7 @@ export interface RunConfig {
   stageId: string;
   sessionFile?: string;
   workDir?: string;  // pi process cwd (target project path)
+  executionPolicy?: "prepare-restricted";
   abortSignal?: AbortSignal;
 }
 
@@ -185,6 +187,9 @@ export class Runner {
       }
 
       lastResult = result;
+      // Restricted Prepare outer retry is always zero: a retry must start from
+      // a fresh private control directory/session/counter set in the caller.
+      if (config.executionPolicy === "prepare-restricted") return result;
       const kind = classifyError(result);
 
       if (kind === ErrorKind.SUCCESS) {
@@ -226,23 +231,25 @@ export class Runner {
     handler?: EventHandler,
   ): Promise<RunResult> {
     const cmd = this.buildCommand(config);
+    if (config.executionPolicy === "prepare-restricted") assertRestrictedPrepareCommand(cmd);
     const stageId = config.stageId || "unknown";
     const startMs = Date.now();
 
     const cwd = config.workDir ?? process.cwd();
-    debug("runner", "info", "[%s] starting pi agent, cwd: %s, cmd:\n%s",
-      stageId, cwd, fmtCmd(cmd));
-    if (Object.keys(config.envExtra).length > 0) {
-      const envSummary = Object.entries(config.envExtra)
-        .map(([k, v]) => `${k}=${v}`).join(", ");
-      debug("runner", "info", "[%s] env: %s", stageId, envSummary);
+    if (config.executionPolicy === "prepare-restricted") {
+      debug("runner", "info", "[%s] starting restricted pi agent (argv preflight passed)", stageId);
+    } else {
+      debug("runner", "info", "[%s] starting pi agent, cwd: %s, cmd:\n%s", stageId, cwd, fmtCmd(cmd));
     }
-
-    const env = {
-      ...process.env,
-      ...this.modelConfig.envVars,
-      ...config.envExtra,
-    };
+    const env: NodeJS.ProcessEnv = config.executionPolicy === "prepare-restricted"
+      ? buildRestrictedPrepareEnv(process.env, this.modelConfig.envVars, config.envExtra, config.model ?? this.modelConfig.modelString)
+      : { ...process.env, ...this.modelConfig.envVars, ...config.envExtra };
+    if (Object.keys(config.envExtra).length > 0) {
+      const envSummary = config.executionPolicy === "prepare-restricted"
+        ? Object.keys(env).sort().join(",")
+        : Object.entries(config.envExtra).map(([k, v]) => `${k}=${v}`).join(", ");
+      debug("runner", "info", "[%s] env%s: %s", stageId, config.executionPolicy ? " keys" : "", envSummary);
+    }
 
     return new Promise<RunResult>((resolve) => {
       const proc = spawn(cmd[0], cmd.slice(1), {
@@ -271,6 +278,7 @@ export class Runner {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           logEvent({ category: "agent", event: "idle_timeout", stage: stageId, timeout_s: idleTimeoutSec });
+          if (config.executionPolicy === "prepare-restricted") cleanupRestrictedPrepareOutput(env);
           proc.kill();
         }, idleTimeoutSec * 1000);
       };
@@ -279,9 +287,10 @@ export class Runner {
         proc.kill();
       };
 
-      const idleTimeoutSec = this.engineConfig.idleTimeout;
+      const idleTimeoutSec = config.executionPolicy === "prepare-restricted" ? 90 : this.engineConfig.idleTimeout;
       timeoutTimer = setTimeout(() => {
         logEvent({ category: "agent", event: "timeout", stage: stageId, timeout_s: config.timeout });
+        if (config.executionPolicy === "prepare-restricted") cleanupRestrictedPrepareOutput(env);
         proc.kill();
       }, config.timeout * 1000);
 
@@ -315,12 +324,22 @@ export class Runner {
 
           if (eventType === "turn_start") {
             turnCount++;
+            if (config.executionPolicy === "prepare-restricted" && turnCount > 24) {
+              lastError = "prepare turn budget exceeded";
+              cleanupRestrictedPrepareOutput(env);
+              proc.kill();
+            }
             handler?.onTurnStart(turnCount, elapsedS);
           } else if (eventType === "tool_execution_start") {
             const toolName = event.toolName ?? "unknown";
             const args = event.args ?? {};
             toolCalls.push(toolName);
-            const summary = formatToolArgsSummary(toolName, args);
+            if (config.executionPolicy === "prepare-restricted" && !PREPARE_TOOL_ALLOWLIST.has(toolName)) {
+              lastError = "unauthorized prepare tool";
+              cleanupRestrictedPrepareOutput(env);
+              proc.kill();
+            }
+            const summary = formatRestrictedToolArgsSummary(toolName, args);
             logEvent({
               category: "agent",
               event: "tool_call",
@@ -335,7 +354,9 @@ export class Runner {
             const isErr = event.isError ?? false;
             const toolName = event.toolName ?? "";
             if (isErr) {
-              const errResult = truncateLogText(stringifyLogValue(event.result));
+              const errResult = toolName === "submit_plan"
+                ? "submit_plan validation failed (<redacted>)"
+                : truncateLogText(stringifyLogValue(event.result));
               logEvent({
                 category: "agent",
                 event: "tool_call",
@@ -371,6 +392,12 @@ export class Runner {
             totalCacheRead += cacheReadTok;
             totalCacheWrite += cacheWriteTok;
             totalTokens += messageTotal;
+            if (config.executionPolicy === "prepare-restricted"
+              && (Math.max(totalTokens, totalIn + totalOut + totalCacheRead + totalCacheWrite) > 200_000 || totalOut > 24_000)) {
+              lastError = "prepare token budget exceeded";
+              cleanupRestrictedPrepareOutput(env);
+              proc.kill();
+            }
 
             const stopReason = msg.stopReason ?? "";
             const errMsgField = msg.errorMessage ?? "";
@@ -380,7 +407,7 @@ export class Runner {
 
             if (stopReason === "error" || errMsgField) {
               apiErrors++;
-              lastError = errMsgField || stopReason;
+              lastError = config.executionPolicy === "prepare-restricted" ? "provider error" : (errMsgField || stopReason);
               logEvent({
                 category: "agent",
                 event: "api_error",
@@ -416,7 +443,7 @@ export class Runner {
               debug("runner", "error", "[%s] [%ss] ❌ retries exhausted: %s", stageId, elapsedS.toFixed(0), finalErr);
             }
           } else if (eventType === "extension_error") {
-            const errMsg = event.message ?? "";
+            const errMsg = config.executionPolicy === "prepare-restricted" ? "restricted extension error" : (event.message ?? "");
             logEvent({ category: "agent", event: "extension_error", stage: stageId, message: errMsg });
           }
         }
@@ -434,25 +461,36 @@ export class Runner {
 
         const durationMs = Date.now() - startMs;
 
-        // Capture stderr (extension logs, warnings)
+        // Restricted stderr may contain provider/extension/source data; only
+        // persist safe counters, never raw lines.
         if (stderrData.trim()) {
-          for (const line of stderrData.trim().split("\n")) {
-            if (line.trim()) {
-              debug("runner", "info", "[%s] [stderr] %s", stageId, line.trim());
+          if (config.executionPolicy === "prepare-restricted") {
+            debug("runner", "info", "[%s] restricted stderr: bytes=%s lines=%s", stageId, Buffer.byteLength(stderrData), stderrData.trim().split("\n").length);
+          } else {
+            for (const line of stderrData.trim().split("\n")) {
+              if (line.trim()) debug("runner", "info", "[%s] [stderr] %s", stageId, line.trim());
             }
           }
         }
 
-        const sessionFile =
-          config.sessionFile || findLatestSession(this.sessionDir, startMs);
+        const sessionFile = config.executionPolicy === "prepare-restricted"
+          ? undefined
+          : config.sessionFile || findLatestSession(this.sessionDir, startMs);
 
         if (sessionFile && this.engineConfig.exportSessions) {
           exportSessionHtml(sessionFile);
           exportSessionMarkdown(sessionFile, { stageId });
         }
 
+        const policyFailed = config.executionPolicy === "prepare-restricted"
+          && (turnCount > 24
+            || totalOut > 24_000
+            || Math.max(totalTokens, totalIn + totalOut + totalCacheRead + totalCacheWrite) > 200_000
+            || toolCalls.some((tool) => !PREPARE_TOOL_ALLOWLIST.has(tool))
+            || !verifyRestrictedPrepareArtifacts(env));
+        if (policyFailed) cleanupRestrictedPrepareOutput(env);
         const result: RunResult = {
-          exitCode: code ?? 0,
+          exitCode: policyFailed ? 3 : (code ?? 0),
           durationMs,
           sessionFile: sessionFile ?? undefined,
           toolCalls,
@@ -539,9 +577,11 @@ export class Runner {
     cmd.push(
       "--no-prompt-templates",
       "--no-themes",
-      "--model",
-      modelStr,
     );
+    if (config.executionPolicy === "prepare-restricted") {
+      cmd.push("--no-context-files", "--no-approve", "--offline", "--no-session");
+    }
+    cmd.push("--model", modelStr);
     if (thinking) {
       cmd.push("--thinking", thinking);
     }
@@ -549,10 +589,12 @@ export class Runner {
       "--tools",
       config.tools ? config.tools.join(",") : "read,bash,edit,write",
     );
-    if (config.sessionFile) {
-      cmd.push("--session", config.sessionFile);
-    } else if (this.sessionDir) {
-      cmd.push("--session-dir", this.sessionDir);
+    if (config.executionPolicy !== "prepare-restricted") {
+      if (config.sessionFile) {
+        cmd.push("--session", config.sessionFile);
+      } else if (this.sessionDir) {
+        cmd.push("--session-dir", this.sessionDir);
+      }
     }
     for (const f of config.inputFiles) {
       cmd.push(`@${f}`);
@@ -563,8 +605,132 @@ export class Runner {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Restricted Prepare execution policy + helpers
 // ---------------------------------------------------------------------------
+
+const PREPARE_TOOL_ALLOWLIST = new Set(["read_project_manifest", "read_project_file", "submit_plan"]);
+
+function restrictedToolDisplay(toolName: string, args: Record<string, any>): string | undefined {
+  if (toolName === "submit_plan") {
+    const bytes = Buffer.byteLength(JSON.stringify(args?.plan ?? null), "utf8");
+    return `submit_plan(plan=<redacted>, serialized_bytes=${bytes})`;
+  }
+  if (toolName === "read_project_file") {
+    return `read_project_file(path=${String(args?.path ?? "")}, offset=${Number(args?.offset ?? 1)}, limit=${Number(args?.limit ?? 100)})`;
+  }
+  if (toolName === "read_project_manifest") {
+    return `read_project_manifest(section=${String(args?.section ?? "overview")}, cursor=${Number(args?.cursor ?? 0)}, limit=${Number(args?.limit ?? 100)})`;
+  }
+  return undefined;
+}
+
+export function formatRestrictedToolArgsSummary(toolName: string, args: Record<string, any>): string {
+  return restrictedToolDisplay(toolName, args) ?? formatToolArgsSummary(toolName, args);
+}
+
+export function formatRestrictedToolCallDisplay(toolName: string, args: Record<string, any>): string {
+  return restrictedToolDisplay(toolName, args) ?? formatToolCallDisplay(toolName, args);
+}
+
+export function assertRestrictedPrepareCommand(cmd: readonly string[]): void {
+  const required = [
+    "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
+    "--no-context-files", "--no-approve", "--offline", "--no-session",
+  ];
+  for (const flag of required) if (!cmd.includes(flag)) throw new Error(`prepare command missing ${flag}`);
+  if (cmd.includes("--session") || cmd.includes("--session-dir")) throw new Error("prepare command enables session persistence");
+  const toolIndex = cmd.indexOf("--tools");
+  if (toolIndex < 0 || cmd[toolIndex + 1] !== "read_project_manifest,read_project_file,submit_plan") {
+    throw new Error("prepare command tool allowlist mismatch");
+  }
+  if (cmd.filter((arg) => arg === "-e").length !== 1) throw new Error("prepare command must load exactly one extension");
+  if (cmd.filter((arg) => arg === "--skill").length !== 1) throw new Error("prepare command must load exactly one skill");
+}
+
+export function buildRestrictedPrepareEnv(
+  processEnv: NodeJS.ProcessEnv,
+  modelEnv: Record<string, string>,
+  envExtra: Record<string, string>,
+  modelString: string,
+): Record<string, string> {
+  const merged: Record<string, string | undefined> = { ...processEnv, ...modelEnv, ...envExtra };
+  const env: Record<string, string> = {};
+  const copy = (key: string) => { if (merged[key] !== undefined) env[key] = String(merged[key]); };
+  for (const key of ["PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"]) copy(key);
+  for (const key of Object.keys(merged)) {
+    if (/^PREPARE_(?:SOURCE_ROOT|CONTROL_DIR|OUTPUT_DIR|PLANNER_INPUT|MANIFEST_SCHEMA|PLAN_SCHEMA|PI_HOME)$/.test(key)
+      || /^YOUNGFLOW_(?:STAGE_ID|OUTPUT_DIR|FLOW_DIR|WORK_DIR)$/.test(key)) copy(key);
+  }
+  const provider = modelString.split("/", 1)[0]?.toLowerCase() ?? "";
+  const providerKeys: Record<string, string[]> = {
+    anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+    openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+    "openai-codex": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+    google: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+    azure: ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
+    bedrock: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"],
+    zai: ["ZAI_API_KEY", "ZAI_BASE_URL"],
+  };
+  for (const key of providerKeys[provider] ?? ["V_PREPARE_MODEL_API_KEY", "V_PREPARE_MODEL_BASE_URL"]) copy(key);
+
+  const controlDir = env.PREPARE_CONTROL_DIR;
+  const piHome = env.PREPARE_PI_HOME ?? merged.PI_CODING_AGENT_DIR;
+  if (!controlDir || !piHome) throw new Error("prepare-restricted requires private control and pi home");
+  const home = path.join(controlDir, "home");
+  const tmp = path.join(controlDir, "tmp");
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  mkdirSync(tmp, { recursive: true, mode: 0o700 });
+  mkdirSync(piHome, { recursive: true, mode: 0o700 });
+  env.HOME = home;
+  env.TMPDIR = tmp;
+  env.PREPARE_PI_HOME = piHome;
+  env.PI_CODING_AGENT_DIR = piHome;
+  env.PI_OFFLINE = "1";
+  return env;
+}
+
+function readNoFollow(pathname: string, maxBytes: number): { bytes: Buffer; mode: number } | null {
+  let fd: number;
+  try { fd = openSync(pathname, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { return null; }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size < 1 || stat.size > maxBytes) return null;
+    const bytes = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < stat.size) {
+      const count = readSync(fd, bytes, offset, stat.size - offset, offset);
+      if (count < 1) return null;
+      offset += count;
+    }
+    return { bytes, mode: stat.mode & 0o777 };
+  } finally { closeSync(fd); }
+}
+
+function verifyRestrictedPrepareArtifacts(env: NodeJS.ProcessEnv): boolean {
+  const outputDir = env.PREPARE_OUTPUT_DIR;
+  const controlDir = env.PREPARE_CONTROL_DIR;
+  if (!outputDir || !controlDir) return false;
+  try {
+    if (readdirSync(outputDir).sort().join(",") !== "assessment-plan.json") return false;
+    const plan = readNoFollow(path.join(outputDir, "assessment-plan.json"), 128 * 1024);
+    const receiptFile = readNoFollow(path.join(controlDir, "receipt.json"), 64 * 1024);
+    if (!plan || plan.mode !== 0o600 || !receiptFile || receiptFile.mode !== 0o600) return false;
+    const receipt = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(receiptFile.bytes));
+    const counters = receipt.counters;
+    const counterValues = counters && typeof counters === "object" ? Object.values(counters) : [];
+    return receipt.status === "committed"
+      && receipt.plan_sha256 === createHash("sha256").update(plan.bytes).digest("hex")
+      && counterValues.length === 8
+      && counterValues.every((value) => Number.isSafeInteger(value) && Number(value) >= 0);
+  } catch { return false; }
+}
+
+function cleanupRestrictedPrepareOutput(env: NodeJS.ProcessEnv): void {
+  const outputDir = env.PREPARE_OUTPUT_DIR;
+  if (!outputDir) return;
+  rmSync(path.join(outputDir, "assessment-plan.json"), { force: true });
+  rmSync(path.join(outputDir, "assessment-plan.json.tmp"), { force: true });
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

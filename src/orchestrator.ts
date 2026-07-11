@@ -13,7 +13,7 @@ import { compare, parseLiteral } from "./condition.js";
 import { resolveModelEnvReferences } from "./env-interpolation.js";
 import { engineConfigFromEnv, type EngineConfig } from "./engine-config.js";
 import { Executor, type StageResult } from "./executor.js";
-import { Runner, loadEnvFile } from "./runner.js";
+import { Runner, buildRestrictedPrepareEnv, loadEnvFile } from "./runner.js";
 import { precheckModels, resolveModelConfig, type ModelConfig } from "./model-config.js";
 import * as report from "./report.js";
 import {
@@ -200,16 +200,25 @@ export class Orchestrator {
 
     this.checkpoint = new Checkpoint(this.workspace.checkpointsDir);
 
-    // Build runner
+    // Build runner. Restricted Prepare creates its pi config only inside the
+    // private control directory and never imports global subscription auth.
+    const restrictedPrepare = resolvedSpec.stages.length === 1
+      && resolvedSpec.stages[0]?.executionPolicy === "prepare-restricted";
+    const prepareControlDir = restrictedPrepare ? process.env.PREPARE_CONTROL_DIR : undefined;
+    if (restrictedPrepare && !prepareControlDir) throw new Error("prepare-restricted requires PREPARE_CONTROL_DIR");
     const modelConfig = resolveModelConfig(
       rawEnv,
       resolvedSpec.defaultModel,
-      resolvedSpec.flowDir,
+      restrictedPrepare ? prepareControlDir : resolvedSpec.flowDir,
       resolvedSpec.agentsDir,
       resolvedSpec.modelsJsonPath,
+      !restrictedPrepare,
     );
     if (!opts.skipModelPrecheck) {
-      precheckModels(collectReferencedModels(resolvedSpec), modelConfig.agentDir, modelConfig.envVars);
+      const precheckEnv = restrictedPrepare
+        ? buildRestrictedPrepareEnv(process.env, modelConfig.envVars, {}, resolvedSpec.defaultModel)
+        : modelConfig.envVars;
+      precheckModels(collectReferencedModels(resolvedSpec), modelConfig.agentDir, precheckEnv);
     }
     const engineConfig = engineConfigFromEnv(rawEnv);
     this.runner = new Runner({

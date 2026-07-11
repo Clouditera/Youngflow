@@ -77,6 +77,7 @@ export interface StageSpec {
   readonly errorStrategy: string;
   readonly extensions: readonly string[];
   readonly env: Record<string, string> | undefined;
+  readonly executionPolicy: "prepare-restricted" | undefined;
   readonly routes: readonly RouteSpec[];
   readonly tasks: readonly TaskSpec[];
   readonly over: string | undefined;
@@ -230,6 +231,7 @@ function parseStage(raw: Record<string, any>): StageSpec {
     errorStrategy: raw.error_strategy ?? "stop",
     extensions: raw.extensions ?? [],
     env: raw.env ? { ...raw.env } : undefined,
+    executionPolicy: raw.execution_policy ?? undefined,
     routes: (raw.routes ?? []).map(parseRoute),
     tasks: (raw.tasks ?? []).map(parseTask),
     over: raw.over ?? undefined,
