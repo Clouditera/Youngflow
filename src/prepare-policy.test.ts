@@ -10,6 +10,7 @@ import {
   Runner,
   assertRestrictedPrepareCommand,
   buildRestrictedPrepareEnv,
+  buildRestrictedPostflightEnv,
   formatRestrictedToolArgsSummary,
   formatRestrictedToolCallDisplay,
 } from "./runner.js";
@@ -78,7 +79,7 @@ function validPlan() {
 function runner(root: string) {
   const prompt = path.join(root, "agent.md"); writeFileSync(prompt, "safe");
   return new Runner({
-    modelConfig: { modelString: "anthropic/test", thinkingLevel: undefined, agentDir: path.join(root, "agent"), envVars: {} },
+    modelConfig: { modelString: "anthropic/test", thinkingLevel: undefined, agentDir: path.join(root, "control/.pi-agent"), envVars: { PI_CODING_AGENT_DIR: path.join(root, "control/.pi-agent") } },
     engineConfig: { errorRetries: 9, errorRetryBackoff: 1, idleTimeout: 300, exportSessions: true },
     systemPromptPath: prompt,
     sessionDir: path.join(root, "sessions"),
@@ -119,10 +120,13 @@ describe("prepare-restricted execution policy", () => {
       MINIO_SECRET_KEY: "minio-secret", SANDBOX_TOKEN: "sandbox-secret", SSH_AUTH_SOCK: "/secret/socket",
       DOCKER_HOST: "unix:///secret", ISSUER_TOKEN: "issuer-secret", NODE_OPTIONS: "--require evil",
     };
-    const env = buildRestrictedPrepareEnv(processEnv, {}, { YOUNGFLOW_STAGE_ID: "prepare" }, "anthropic/test");
+    const env = buildRestrictedPrepareEnv(processEnv, { PI_CODING_AGENT_DIR: path.join(root, "control/.pi-agent") }, { YOUNGFLOW_STAGE_ID: "prepare" }, "anthropic/test");
     expect(env.ANTHROPIC_API_KEY).toBe("selected-secret");
     for (const key of ["OPENAI_API_KEY", "DATABASE_URL", "MINIO_SECRET_KEY", "SANDBOX_TOKEN", "SSH_AUTH_SOCK", "DOCKER_HOST", "ISSUER_TOKEN", "NODE_OPTIONS"]) expect(env).not.toHaveProperty(key);
-    expect(env).toMatchObject({ PI_OFFLINE: "1", HOME: path.join(root, "control/home"), TMPDIR: path.join(root, "control/tmp") });
+    expect(env).toMatchObject({ PI_OFFLINE: "1", HOME: path.join(root, "control/home"), TMPDIR: path.join(root, "control/tmp"), PI_CODING_AGENT_DIR: path.join(root, "control/.pi-agent"), PREPARE_PI_HOME: path.join(root, "control/.pi-agent") });
+    const postflightEnv = buildRestrictedPostflightEnv({ ...env, HTTPS_PROXY: "proxy-canary", ANTHROPIC_API_KEY: "provider-canary" });
+    expect(postflightEnv).not.toHaveProperty("HTTPS_PROXY");
+    expect(postflightEnv).not.toHaveProperty("ANTHROPIC_API_KEY");
   });
 
   it("F04 restricted model precheck replaces process env and redacts failures", () => {
@@ -171,21 +175,25 @@ describe("prepare-restricted execution policy", () => {
   it("F02/F03/F04 runs a fake pi with exact argv, private cwd and sanitized env", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "prepare-actual-")); roots.push(root);
     const bin = path.join(root, "bin"); mkdirSync(bin);
-    const argsFile = path.join(root, "args.txt"), envFile = path.join(root, "env.txt"), cwdFile = path.join(root, "cwd.txt");
+    const argsFile = path.join(root, "args.txt"), envFile = path.join(root, "env.txt"), precheckEnvFile = path.join(root, "precheck-env.txt"), cwdFile = path.join(root, "cwd.txt");
     const pi = path.join(bin, "pi");
-    writeFileSync(pi, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nenv | sort > '${envFile}'\npwd > '${cwdFile}'\nprintf '%s\\n' '{"type":"turn_start"}' '{"type":"message_end","message":{"content":[{"type":"text","text":"done"}],"usage":{"input":1,"output":1,"totalTokens":2},"stopReason":"stop"}}'\n`);
+    writeFileSync(pi, `#!/bin/sh\nif [ "\${1:-}" = "--list-models" ]; then env | sort > '${precheckEnvFile}'; printf 'anthropic test\\n'; exit 0; fi\nprintf '%s\\n' "$@" > '${argsFile}'\nenv | sort > '${envFile}'\npwd > '${cwdFile}'\nprintf '%s\\n' '{"type":"turn_start"}' '{"type":"message_end","message":{"content":[{"type":"text","text":"done"}],"usage":{"input":1,"output":1,"totalTokens":2},"stopReason":"stop"}}'\n`);
     chmodSync(pi, 0o755);
     const control = path.join(root, "control"), output = path.join(root, "durable"), runtime = path.join(control, "runtime");
     mkdirSync(runtime, { recursive: true }); mkdirSync(output);
     const r = runner(root);
+    const baseEnv = {
+      PATH: `${bin}:/usr/bin`, PREPARE_CONTROL_DIR: control, PREPARE_PI_HOME: path.join(control, "pi"),
+      PREPARE_SOURCE_ROOT: path.join(root, "source"), PREPARE_OUTPUT_DIR: output,
+      PREPARE_PLANNER_INPUT: path.join(control, "input"), PREPARE_MANIFEST_SCHEMA: path.join(root, "manifest"),
+      PREPARE_PLAN_SCHEMA: path.join(root, "plan"), DATABASE_URL: "must-not-pass", OPENAI_API_KEY: "extra-provider",
+    };
+    const precheckEnv = buildRestrictedPrepareEnv(baseEnv, r.modelConfig.envVars, {}, r.modelConfig.modelString);
+    precheckModels(["anthropic/test"], r.modelConfig.agentDir, precheckEnv, { replaceEnv: true, redactErrors: true });
     const result = await r.run({
       skillDirs: [path.join(root, "skill")], task: "trusted", inputFiles: [], timeout: 10,
-      extensions: [path.join(root, "extension")], envExtra: {
-        PATH: `${bin}:/usr/bin`, PREPARE_CONTROL_DIR: control, PREPARE_PI_HOME: path.join(control, "pi"),
-        PREPARE_SOURCE_ROOT: path.join(root, "source"), PREPARE_OUTPUT_DIR: output,
-        PREPARE_PLANNER_INPUT: path.join(control, "input"), PREPARE_MANIFEST_SCHEMA: path.join(root, "manifest"),
-        PREPARE_PLAN_SCHEMA: path.join(root, "plan"), DATABASE_URL: "must-not-pass", OPENAI_API_KEY: "extra-provider",
-      }, stageId: "prepare", tools: ["read_project_manifest", "read_project_file", "submit_plan"],
+      extensions: [path.join(root, "extension")], envExtra: baseEnv,
+      stageId: "prepare", tools: ["read_project_manifest", "read_project_file", "submit_plan"],
       workDir: runtime, executionPolicy: "prepare-restricted",
     });
     // Fake pi does not submit a validated plan/receipt, so postflight must fail
@@ -197,6 +205,10 @@ describe("prepare-restricted execution policy", () => {
     const childEnv = readFileSync(envFile, "utf8");
     expect(childEnv).not.toContain("DATABASE_URL=");
     expect(childEnv).not.toContain("OPENAI_API_KEY=");
+    const precheckChildEnv = readFileSync(precheckEnvFile, "utf8");
+    const piHome = childEnv.split("\n").find((line) => line.startsWith("PI_CODING_AGENT_DIR="));
+    expect(precheckChildEnv.split("\n")).toContain(piHome);
+    expect(piHome).toBe(`PI_CODING_AGENT_DIR=${path.join(control, ".pi-agent")}`);
   });
 
   it("F07 enforces token budget and outer retry=0, removing a durable plan", async () => {
@@ -218,9 +230,10 @@ describe("prepare-restricted execution policy", () => {
   });
 
   it("S/R parent independently rejects forged plans and cleans nonzero/abort outputs", async () => {
-    const execute = async (plan: any, exitCode = 0, abort = false) => {
+    const execute = async (plan: any, exitCode = 0, abort = false, receiptMode = 0o600) => {
       const root = mkdtempSync(path.join(tmpdir(), "prepare-parent-")); roots.push(root);
       const f = parentFixture(root, plan);
+      chmodSync(path.join(f.control, "receipt.json"), receiptMode);
       const bin = path.join(root, "bin"); mkdirSync(bin);
       const pi = path.join(bin, "pi");
       writeFileSync(pi, `#!/bin/sh\nprintf '%s\\n' '{"type":"tool_execution_start","toolName":"submit_plan","args":{"plan":"redacted"}}' '{"type":"tool_execution_end","toolName":"submit_plan","isError":false,"result":"ok"}' '{"type":"message_end","message":{"content":[{"type":"text","text":"done"}],"usage":{"input":1,"output":1,"totalTokens":2},"stopReason":"stop"}}'\n${abort ? "sleep 5" : ""}\nexit ${exitCode}\n`); chmodSync(pi, 0o755);
@@ -244,6 +257,10 @@ describe("prepare-restricted execution policy", () => {
     expect(forged.result.exitCode).toBe(3);
     expect(readdirSync(forged.output)).toEqual([]);
 
+    const publicReceipt = await execute(validPlan(), 0, false, 0o644);
+    expect(publicReceipt.result.exitCode).toBe(3);
+    expect(readdirSync(publicReceipt.output)).toEqual([]);
+
     const nonzero = await execute(validPlan(), 1);
     expect(nonzero.result.exitCode).toBe(3);
     expect(readdirSync(nonzero.output)).toEqual([]);
@@ -252,6 +269,16 @@ describe("prepare-restricted execution policy", () => {
     expect(killed.result.exitCode).toBe(3);
     expect(readdirSync(killed.output)).toEqual([]);
   }, 20_000);
+
+  it("keeps non-restricted timeout termination graceful", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "prepare-main-term-")); roots.push(root);
+    const bin = path.join(root, "bin"); mkdirSync(bin);
+    const marker = path.join(root, "term.txt"), pi = path.join(bin, "pi");
+    writeFileSync(pi, `#!/bin/sh\ntrap 'echo TERM > "${marker}"; exit 0' TERM\nwhile :; do sleep 1; done\n`); chmodSync(pi, 0o755);
+    const r = runner(root); (r.engineConfig as any).errorRetries = 0;
+    await r.run({ skillDirs: [], task: "normal", inputFiles: [], timeout: 0.05, extensions: [], envExtra: { PATH: `${bin}:/usr/bin` }, stageId: "normal", workDir: root });
+    expect(readFileSync(marker, "utf8").trim()).toBe("TERM");
+  });
 
   it("preflight rejects extra extension/skill, builtin tools and session persistence", () => {
     const base = ["pi", "-p", "--mode", "json", "--no-skills", "--skill", "safe", "--no-extensions", "-e", "safe", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--offline", "--no-session", "--tools", "read_project_manifest,read_project_file,submit_plan", "task"];

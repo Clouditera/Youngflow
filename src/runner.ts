@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { setMaxListeners } from "node:events";
 setMaxListeners(0);
 import { spawn, spawnSync, execSync } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 const { globSync } = fg;
@@ -261,8 +261,10 @@ export class Runner {
       const killProcess = () => {
         if (config.executionPolicy === "prepare-restricted" && proc.pid) {
           try { process.kill(-proc.pid, "SIGKILL"); return; } catch { /* process already gone */ }
+          try { proc.kill("SIGKILL"); } catch { /* process already gone */ }
+          return;
         }
-        try { proc.kill("SIGKILL"); } catch { /* process already gone */ }
+        try { proc.kill(); } catch { /* process already gone */ }
       };
 
       const toolCalls: string[] = [];
@@ -576,7 +578,13 @@ export class Runner {
         if (config.executionPolicy === "prepare-restricted") {
           cleanupRestrictedPrepareOutput(env);
           cleanupRestrictedPrepareControl(env);
+          return;
         }
+        resolve({
+          exitCode: -1, durationMs: Date.now() - startMs, toolCalls: [], turns: 0,
+          tokensIn: 0, tokensOut: 0, tokensCacheRead: 0, tokensCacheWrite: 0, tokensTotal: 0,
+          apiErrors: 0, retries: 0, lastError, finalHasContent: false,
+        });
       });
     });
   }
@@ -701,13 +709,17 @@ export function buildRestrictedPrepareEnv(
   for (const key of providerKeys[provider] ?? ["V_PREPARE_MODEL_API_KEY", "V_PREPARE_MODEL_BASE_URL"]) copy(key);
 
   const controlDir = env.PREPARE_CONTROL_DIR;
-  const piHome = env.PREPARE_PI_HOME ?? merged.PI_CODING_AGENT_DIR;
+  const piHome = merged.PI_CODING_AGENT_DIR;
   if (!controlDir || !piHome) throw new Error("prepare-restricted requires private control and pi home");
   const home = path.join(controlDir, "home");
   const tmp = path.join(controlDir, "tmp");
   mkdirSync(home, { recursive: true, mode: 0o700 });
   mkdirSync(tmp, { recursive: true, mode: 0o700 });
   mkdirSync(piHome, { recursive: true, mode: 0o700 });
+  const stableControl = realpathSync(controlDir);
+  const stablePiHome = realpathSync(piHome);
+  const relativePiHome = path.relative(stableControl, stablePiHome);
+  if (!relativePiHome || relativePiHome.startsWith("..") || path.isAbsolute(relativePiHome)) throw new Error("prepare-restricted pi home must be inside control");
   env.HOME = home;
   env.TMPDIR = tmp;
   env.PREPARE_PI_HOME = piHome;
@@ -733,6 +745,18 @@ function readNoFollow(pathname: string, maxBytes: number): { bytes: Buffer; mode
   } finally { closeSync(fd); }
 }
 
+export function buildRestrictedPostflightEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const postflight: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "PATH", "LANG", "LC_ALL", "HOME", "TMPDIR",
+    "PREPARE_SOURCE_ROOT", "PREPARE_CONTROL_DIR", "PREPARE_OUTPUT_DIR",
+    "PREPARE_PLANNER_INPUT", "PREPARE_MANIFEST_SCHEMA", "PREPARE_PLAN_SCHEMA",
+  ]) {
+    if (env[key] !== undefined) postflight[key] = env[key];
+  }
+  return postflight;
+}
+
 function verifyRestrictedPrepareArtifacts(env: NodeJS.ProcessEnv, config: RunConfig, submitEvents: number): boolean {
   const outputDir = env.PREPARE_OUTPUT_DIR;
   const controlDir = env.PREPARE_CONTROL_DIR;
@@ -748,7 +772,7 @@ function verifyRestrictedPrepareArtifacts(env: NodeJS.ProcessEnv, config: RunCon
       : (existsSync("/usr/local/bin/node") ? "/usr/local/bin/node" : "/usr/bin/node");
     const result = spawnSync(nodeExecutable, [postflight], {
       cwd: controlDir,
-      env,
+      env: buildRestrictedPostflightEnv(env),
       encoding: "utf-8",
       timeout: 30_000,
       maxBuffer: 64 * 1024,
