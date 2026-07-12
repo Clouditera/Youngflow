@@ -79,7 +79,7 @@ function validPlan() {
 function runner(root: string) {
   const prompt = path.join(root, "agent.md"); writeFileSync(prompt, "safe");
   return new Runner({
-    modelConfig: { modelString: "anthropic/test", thinkingLevel: undefined, agentDir: path.join(root, "control/.pi-agent"), envVars: { PI_CODING_AGENT_DIR: path.join(root, "control/.pi-agent") } },
+    modelConfig: { modelString: "anthropic/test", thinkingLevel: undefined, agentDir: path.join(root, "control/.pi-agent"), compactionExtensionPath: path.join(root, "control/.pi-agent/yf-compaction.ts"), envVars: { PI_CODING_AGENT_DIR: path.join(root, "control/.pi-agent") } },
     engineConfig: { errorRetries: 9, errorRetryBackoff: 1, idleTimeout: 300, exportSessions: true },
     systemPromptPath: prompt,
     sessionDir: path.join(root, "sessions"),
@@ -106,6 +106,8 @@ describe("prepare-restricted execution policy", () => {
     expect(() => assertRestrictedPrepareCommand(command)).not.toThrow();
     expect(command).toEqual(expect.arrayContaining(["--no-context-files", "--no-approve", "--offline", "--no-session"]));
     expect(command).not.toContain("--session-dir");
+    expect(command.filter((arg) => arg === "-e")).toHaveLength(1);
+    expect(command.join(" ")).not.toContain("yf-compaction");
     expect(command.join(" ")).not.toMatch(/\bread,bash|\bedit\b|\bwrite\b|\bsubagent\b/);
   });
 

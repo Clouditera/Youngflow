@@ -423,12 +423,14 @@ async function runFlow(
   log(`📝 Log:    ${restrictedPrepare ? "<ephemeral>" : orch.workspace.flowLog}`);
 }
 
-function listStages(
+export function listStages(
   flowYaml: string,
   inputsSpec: Record<string, any>,
-  raw: Record<string, any>,
+  _raw: Record<string, any>,
 ): void {
-  const stages = raw.stages ?? [];
+  // Keep release/list smoke on the exact parser + schema/semantic gate used by
+  // a real run. Printing raw YAML here previously let invalid flows ship.
+  const stages = parseFlow(flowYaml).stages;
   console.log(`Flow: ${flowYaml}\n`);
 
   if (Object.keys(inputsSpec).length > 0) {
@@ -458,7 +460,7 @@ function listStages(
   for (const s of stages) {
     const t = s.type ?? "single";
     console.log(
-      `  ${(s.id as string).padEnd(25)} [${t.padEnd(8)}] ${s.name ?? ""}`,
+      `  ${(s.id as string).padEnd(25)} [${String(t).padEnd(8)}] ${s.name ?? ""}`,
     );
   }
 }

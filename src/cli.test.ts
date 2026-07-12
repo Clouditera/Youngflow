@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createRunId, hasActiveRun, validateRunModeOptions, parseRecursionLimit, resolveInputs, validateWorkDir } from "./cli.js";
+import { createRunId, hasActiveRun, listStages, validateRunModeOptions, parseRecursionLimit, resolveInputs, validateWorkDir } from "./cli.js";
 
 describe("CLI run mode helpers", () => {
   it("formats run ids as UTC timestamps", () => {
@@ -57,6 +57,20 @@ describe("CLI run mode helpers", () => {
       mkdirSync(path.join(tmp, ".youngflow"), { recursive: true });
       writeFileSync(path.join(tmp, ".youngflow", "run.yaml"), "status: running\n");
       expect(hasActiveRun(tmp)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listStages validation", () => {
+  it("uses the same schema validation gate as a real run", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "youngflow-list-stages-"));
+    try {
+      const invalid = path.join(tmp, "invalid.yaml");
+      writeFileSync(invalid, `version: "1.0"\nstages:\n  - id: invalid\n    unexpected_runtime_field: true\n`);
+      expect(() => listStages(invalid, {}, { stages: [{ id: "invalid", unexpected_runtime_field: true }] }))
+        .toThrow(/must NOT have additional properties/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
