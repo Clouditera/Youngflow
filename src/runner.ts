@@ -443,7 +443,8 @@ export class Runner {
             finalStopReason = stopReason || undefined;
             finalHasContent = content.length > 0 || outTok > 0;
 
-            if (stopReason === "error" || errMsgField) {
+            const localRestrictedAbort = config.executionPolicy === "prepare-restricted" && stopReason === "aborted";
+            if (!localRestrictedAbort && (stopReason === "error" || errMsgField)) {
               apiErrors++;
               lastError = config.executionPolicy === "prepare-restricted" ? "provider error" : (errMsgField || stopReason);
               logEvent({

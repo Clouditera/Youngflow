@@ -73,7 +73,7 @@ function validPlan() {
       confidence: 0.9, summary: "The submitted project lacks a build definition.",
       evidence: [{ path: ".", signal: "other", observation: "The trusted manifest is materially truncated." }],
       user_recommendations: [{ code: "include_build_files", message: "Include the project build definition." }],
-    }, sandbox_plan: null, warnings: [],
+    }, sandbox_plan: null, warnings: [{ code: "manifest_truncated", message: "项目机械清单达到读取上限，完整性判断仅依据已确认事实。", evidence_paths: ["."] }],
   };
 }
 
@@ -214,6 +214,21 @@ describe("prepare-restricted execution policy", () => {
     expect(piHome).toBe(`PI_CODING_AGENT_DIR=${path.join(control, ".pi-agent")}`);
   });
 
+  it("does not misclassify restricted local abort as a provider error", async () => {
+    const execute = async (stopReason: string, errorMessage: string) => {
+      const root = mkdtempSync(path.join(tmpdir(), "prepare-abort-classification-")); roots.push(root);
+      const bin = path.join(root, "bin"), control = path.join(root, "control"), output = path.join(root, "output"); mkdirSync(bin); mkdirSync(control); mkdirSync(output);
+      const pi = path.join(bin, "pi");
+      writeFileSync(pi, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ type: "message_end", message: { content: [], usage: { input: 1, output: 0, totalTokens: 1 }, stopReason, errorMessage } })}'\nexit 1\n`); chmodSync(pi, 0o755);
+      return runner(root).run({ skillDirs: ["skill"], task: "trusted", inputFiles: [], timeout: 10, extensions: ["extension"], envExtra: { PATH: `${bin}:/usr/bin`, PREPARE_CONTROL_DIR: control, PREPARE_PI_HOME: path.join(control, "pi"), PREPARE_OUTPUT_DIR: output }, stageId: "prepare", tools: ["read_project_manifest", "read_project_file", "submit_plan"], workDir: control, executionPolicy: "prepare-restricted" });
+    };
+    const local = await execute("aborted", "AbortError");
+    expect(local).toMatchObject({ exitCode: 3, apiErrors: 0, retries: 0, finalStopReason: "aborted" });
+    expect(local.lastError).toBeUndefined();
+    const provider = await execute("error", "provider failed");
+    expect(provider).toMatchObject({ exitCode: 3, apiErrors: 1, retries: 0, lastError: "provider error" });
+  });
+
   it("enforces parent-observed manifest/file/submit start budgets and stops the process group", async () => {
     const execute = async (toolName: string, starts: number) => {
       const root = mkdtempSync(path.join(tmpdir(), "prepare-tool-budget-")); roots.push(root);
@@ -291,6 +306,28 @@ describe("prepare-restricted execution policy", () => {
     const forged = await execute({});
     expect(forged.result.exitCode).toBe(3);
     expect(readdirSync(forged.output)).toEqual([]);
+
+    const missingWarningPlan = validPlan(); missingWarningPlan.warnings = [];
+    const missingWarning = await execute(missingWarningPlan);
+    expect(missingWarning.result.exitCode).toBe(3); expect(readdirSync(missingWarning.output)).toEqual([]);
+
+    const forgedWarningPlan = validPlan(); forgedWarningPlan.warnings[0].message = "forged warning";
+    const forgedWarning = await execute(forgedWarningPlan);
+    expect(forgedWarning.result.exitCode).toBe(3); expect(readdirSync(forgedWarning.output)).toEqual([]);
+
+    const truncatedCompletePlan: any = validPlan();
+    truncatedCompletePlan.source_assessment.status = "complete";
+    truncatedCompletePlan.source_assessment.missing_components = [];
+    truncatedCompletePlan.source_assessment.user_recommendations = [];
+    truncatedCompletePlan.source_assessment.stage_readiness.static_audit = { status: "ready", reasons: [] };
+    truncatedCompletePlan.sandbox_plan = {
+      target: { project_types: ["native"], languages: ["c"], build_systems: [], architectures: ["x86_64"], os_families: ["linux"], target_classes: ["source"] },
+      requirements: { required_capabilities: ["ssh", "shell"], optional_capabilities: [], requires_full_system: false, requires_nested_docker: false, requires_qemu_guest: false, required_assets: [], dependency_egress: { required: false, reasons: [] } },
+      profile_recommendation: { recommended_profile_id: null, alternative_profile_ids: [], confidence: 0, reason: "当前阶段仅生成能力需求，Profile 选择由平台后续解析。" },
+      confidence: 0.9, reason: "基于已确认完整的提交边界生成受管沙箱能力需求。",
+    };
+    const truncatedComplete = await execute(truncatedCompletePlan);
+    expect(truncatedComplete.result.exitCode).toBe(3); expect(readdirSync(truncatedComplete.output)).toEqual([]);
 
     const publicReceipt = await execute(validPlan(), 0, false, 0o644);
     expect(publicReceipt.result.exitCode).toBe(3);
