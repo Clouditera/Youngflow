@@ -193,6 +193,7 @@ export class Orchestrator {
   readonly runner: Runner;
   readonly workDir: string;
   readonly recursionLimit: number;
+  readonly restrictedPrepare: boolean;
   executor: Executor;
 
   private stageMap: Map<string, StageSpec>;
@@ -230,6 +231,7 @@ export class Orchestrator {
 
     const restrictedPrepare = resolvedSpec.stages.length === 1
       && resolvedSpec.stages[0]?.executionPolicy === "prepare-restricted";
+    this.restrictedPrepare = restrictedPrepare;
     if (restrictedPrepare) assertRestrictedPrepareDirectories(opts.workDir, opts.outputDir);
 
     this.workspace = new Workspace(opts.outputDir ?? opts.workDir ?? ".");
@@ -866,6 +868,7 @@ export class Orchestrator {
   }
 
   private refreshReport(force = false): void {
+    if (this.restrictedPrepare) return;
     const now = Date.now();
     const elapsed = now - this.lastReportAt;
     if (!force && this.lastReportAt > 0 && elapsed < Orchestrator.REPORT_THROTTLE_MS) {

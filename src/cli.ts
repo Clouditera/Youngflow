@@ -364,7 +364,7 @@ async function runFlow(
       status: "failed",
       error: e instanceof Error ? e.message : String(e),
     });
-    report.refresh(spec, orch.workspace);
+    if (!restrictedPrepare) report.refresh(spec, orch.workspace);
     throw e;
   }
   const durationMs = Date.now() - start;
@@ -417,7 +417,7 @@ async function runFlow(
     log(line);
   }
 
-  const reportPath = report.refresh(spec, orch.workspace);
+  const reportPath = restrictedPrepare ? undefined : report.refresh(spec, orch.workspace);
   if (reportPath) log(`\n📊 Report: ${reportPath}`);
   log(`📂 Output: ${restrictedPrepare ? "<restricted>" : outputDir}`);
   log(`📝 Log:    ${restrictedPrepare ? "<ephemeral>" : orch.workspace.flowLog}`);
