@@ -13,6 +13,7 @@ import {
   buildRestrictedPostflightEnv,
   formatRestrictedToolArgsSummary,
   formatRestrictedToolCallDisplay,
+  exceedsRestrictedPrepareToolBudget,
 } from "./runner.js";
 
 const roots: string[] = [];
@@ -36,7 +37,7 @@ function parentFixture(root: string, plan: any = validPlan()) {
     statistics: { files_observed: 0, directories_observed: 1, bytes_observed: 0, bytes_hashed: 0, excluded_sensitive_entries: 0, excluded_vcs_entries: 0, extensions: [], languages: [] },
     markers: [], signals: [],
     limits: { maxEntries: 100, maxFiles: 100, maxTotalHashBytes: 1024, maxSingleFileHashBytes: 1024, maxDepth: 8, maxIndexedMarkers: 100 },
-    truncation: { truncated: false, reasons: [] }, warnings: [],
+    truncation: { truncated: true, reasons: ["max_entries"] }, warnings: [],
   };
   const input = {
     schema_version: "prepare-planner-input/v1", source_manifest: manifest,
@@ -48,7 +49,7 @@ function parentFixture(root: string, plan: any = validPlan()) {
   const serialized = JSON.stringify(plan, null, 2) + "\n";
   writeFileSync(path.join(output, "assessment-plan.json"), serialized, { mode: 0o600 }); chmodSync(path.join(output, "assessment-plan.json"), 0o600);
   const counters = { totalCalls: 1, manifestCalls: 0, fileCalls: 0, submitCalls: 1, manifestBytes: 0, fileBytes: 0, diskBytes: 0, distinctFiles: 0 };
-  writeFileSync(path.join(control, "receipt.json"), canonical({ status: "committed", schema_version: "prepare-receipt/v1", plan_sha256: createHash("sha256").update(serialized).digest("hex"), manifest_sha256: createHash("sha256").update(canonical(manifest)).digest("hex"), counters }) + "\n", { mode: 0o600 });
+  writeFileSync(path.join(control, "receipt.json"), canonical({ status: "committed", schema_version: "prepare-receipt/v2", decision_sha256: "d".repeat(64), plan_sha256: createHash("sha256").update(serialized).digest("hex"), manifest_sha256: createHash("sha256").update(canonical(manifest)).digest("hex"), counters }) + "\n", { mode: 0o600 });
   return {
     source, control, output,
     extension: path.join(repo, "flows/prepare/extensions/prepare-tools"),
@@ -70,7 +71,7 @@ function validPlan() {
       external_dependencies: [], uncertainties: [],
       stage_readiness: { static_audit: { status: "limited", reasons: ["Build definition is absent."] }, build: { status: "not_requested", reasons: [] }, poc: { status: "not_requested", reasons: [] }, exp: { status: "not_requested", reasons: [] } },
       confidence: 0.9, summary: "The submitted project lacks a build definition.",
-      evidence: [{ path: ".", signal: "source_tree_shape", observation: "The submitted project root is present." }],
+      evidence: [{ path: ".", signal: "other", observation: "The trusted manifest is materially truncated." }],
       user_recommendations: [{ code: "include_build_files", message: "Include the project build definition." }],
     }, sandbox_plan: null, warnings: [],
   };
@@ -211,6 +212,38 @@ describe("prepare-restricted execution policy", () => {
     const piHome = childEnv.split("\n").find((line) => line.startsWith("PI_CODING_AGENT_DIR="));
     expect(precheckChildEnv.split("\n")).toContain(piHome);
     expect(piHome).toBe(`PI_CODING_AGENT_DIR=${path.join(control, ".pi-agent")}`);
+  });
+
+  it("enforces parent-observed manifest/file/submit start budgets and stops the process group", async () => {
+    const execute = async (toolName: string, starts: number) => {
+      const root = mkdtempSync(path.join(tmpdir(), "prepare-tool-budget-")); roots.push(root);
+      const bin = path.join(root, "bin"), control = path.join(root, "control"), output = path.join(root, "output");
+      mkdirSync(bin); mkdirSync(control); mkdirSync(output); writeFileSync(path.join(output, "must-remove"), "x");
+      const pi = path.join(bin, "pi");
+      const lines = Array.from({ length: starts }, () => JSON.stringify({ type: "tool_execution_start", toolName, args: { malformed: true } })).join("\\n");
+      writeFileSync(pi, `#!/bin/sh\nprintf '%b\\n' '${lines}\\n'\nsleep 30\n`); chmodSync(pi, 0o755);
+      const started = Date.now();
+      const result = await runner(root).run({
+        skillDirs: ["skill"], task: "trusted", inputFiles: [], timeout: 20, extensions: ["extension"],
+        envExtra: { PATH: `${bin}:/usr/bin`, PREPARE_CONTROL_DIR: control, PREPARE_PI_HOME: path.join(control, "pi"), PREPARE_OUTPUT_DIR: output },
+        stageId: "prepare", tools: ["read_project_manifest", "read_project_file", "submit_plan"], workDir: control, executionPolicy: "prepare-restricted",
+      });
+      expect(result).toMatchObject({ exitCode: 3, lastError: "prepare tool budget exceeded", retries: 0 });
+      expect(result.toolCalls).toHaveLength(starts);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(readdirSync(output)).toEqual([]); expect(readdirSync(control)).toEqual([]);
+    };
+    await execute("read_project_manifest", 13);
+    await execute("read_project_file", 33);
+    await execute("submit_plan", 4);
+  }, 20_000);
+
+  it("keeps the total-start guard as a future-facing pure defense without weakening category limits", () => {
+    expect(exceedsRestrictedPrepareToolBudget({ total: 48, manifest: 12, file: 32, submit: 3 })).toBe(false);
+    expect(exceedsRestrictedPrepareToolBudget({ total: 49, manifest: 0, file: 0, submit: 0 })).toBe(true);
+    expect(exceedsRestrictedPrepareToolBudget({ total: 13, manifest: 13, file: 0, submit: 0 })).toBe(true);
+    expect(exceedsRestrictedPrepareToolBudget({ total: 33, manifest: 0, file: 33, submit: 0 })).toBe(true);
+    expect(exceedsRestrictedPrepareToolBudget({ total: 4, manifest: 0, file: 0, submit: 4 })).toBe(true);
   });
 
   it("F07 enforces token budget and outer retry=0, removing a durable plan", async () => {

@@ -269,6 +269,7 @@ export class Runner {
       };
 
       const toolCalls: string[] = [];
+      const restrictedToolStarts = { total: 0, manifest: 0, file: 0, submit: 0 };
       let turnCount = 0;
       let totalIn = 0;
       let totalOut = 0;
@@ -324,6 +325,7 @@ export class Runner {
 
       let buffer = "";
       proc.stdout!.on("data", (chunk: Buffer) => {
+        if (policyKilled) return;
         resetIdle();
         buffer += chunk.toString("utf-8");
 
@@ -358,11 +360,21 @@ export class Runner {
             const toolName = event.toolName ?? "unknown";
             const args = event.args ?? {};
             toolCalls.push(toolName);
-            if (config.executionPolicy === "prepare-restricted" && !PREPARE_TOOL_ALLOWLIST.has(toolName)) {
-              lastError = "unauthorized prepare tool";
-              policyKilled = true;
-              cleanupRestrictedPrepareOutput(env);
-              killProcess();
+            if (config.executionPolicy === "prepare-restricted") {
+              restrictedToolStarts.total++;
+              if (toolName === "read_project_manifest") restrictedToolStarts.manifest++;
+              else if (toolName === "read_project_file") restrictedToolStarts.file++;
+              else if (toolName === "submit_plan") restrictedToolStarts.submit++;
+              const unauthorized = !PREPARE_TOOL_ALLOWLIST.has(toolName);
+              const overBudget = exceedsRestrictedPrepareToolBudget(restrictedToolStarts);
+              if (unauthorized || overBudget) {
+                lastError = unauthorized ? "unauthorized prepare tool" : "prepare tool budget exceeded";
+                policyKilled = true;
+                cleanupRestrictedPrepareOutput(env);
+                buffer = "";
+                killProcess();
+                return;
+              }
             }
             const summary = formatRestrictedToolArgsSummary(toolName, args);
             logEvent({
@@ -648,6 +660,10 @@ export class Runner {
 // ---------------------------------------------------------------------------
 
 const PREPARE_TOOL_ALLOWLIST = new Set(["read_project_manifest", "read_project_file", "submit_plan"]);
+
+export function exceedsRestrictedPrepareToolBudget(counts: Readonly<{ total: number; manifest: number; file: number; submit: number }>): boolean {
+  return counts.total > 48 || counts.manifest > 12 || counts.file > 32 || counts.submit > 3;
+}
 
 function restrictedToolDisplay(toolName: string, args: Record<string, any>): string | undefined {
   if (toolName === "submit_plan") {
