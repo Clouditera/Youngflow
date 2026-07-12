@@ -70,7 +70,7 @@ function validPlan() {
       missing_components: [{ category: "build_manifest", name: "Build definition", expected_by: "No build definition is present.", evidence_paths: ["."], impact: ["static_audit"], recoverable_from_submission: false }],
       external_dependencies: [], uncertainties: [],
       stage_readiness: { static_audit: { status: "limited", reasons: ["Build definition is absent."] }, build: { status: "not_requested", reasons: [] }, poc: { status: "not_requested", reasons: [] }, exp: { status: "not_requested", reasons: [] } },
-      confidence: 0.9, summary: "The submitted project lacks a build definition.",
+      confidence: 0.9, summary: "已确认“Example project”不完整：缺少构建定义：Build definition（No build definition is present.）。受影响阶段：静态审计；本次 Prepare 不会放行主审计流程。详见缺失项与补齐建议。",
       evidence: [{ path: ".", signal: "other", observation: "The trusted manifest is materially truncated." }],
       user_recommendations: [{ code: "include_build_files", message: "Include the project build definition." }],
     }, sandbox_plan: null, warnings: [{ code: "manifest_truncated", message: "项目机械清单达到读取上限，完整性判断仅依据已确认事实。", evidence_paths: ["."] }],
@@ -306,6 +306,10 @@ describe("prepare-restricted execution policy", () => {
     const forged = await execute({});
     expect(forged.result.exitCode).toBe(3);
     expect(readdirSync(forged.output)).toEqual([]);
+
+    const forgedSummaryPlan = validPlan(); forgedSummaryPlan.source_assessment.summary = "facts removed";
+    const forgedSummary = await execute(forgedSummaryPlan);
+    expect(forgedSummary.result.exitCode).toBe(3); expect(readdirSync(forgedSummary.output)).toEqual([]);
 
     const missingWarningPlan = validPlan(); missingWarningPlan.warnings = [];
     const missingWarning = await execute(missingWarningPlan);
