@@ -743,7 +743,10 @@ function verifyRestrictedPrepareArtifacts(env: NodeJS.ProcessEnv, config: RunCon
     const plan = readNoFollow(path.join(outputDir, "assessment-plan.json"), 128 * 1024);
     if (!plan || plan.mode !== 0o600) return false;
     const postflight = path.join(extensionDir, "postflight.mjs");
-    const result = spawnSync(process.execPath, [postflight], {
+    const nodeExecutable = path.basename(process.execPath).startsWith("node")
+      ? process.execPath
+      : (existsSync("/usr/local/bin/node") ? "/usr/local/bin/node" : "/usr/bin/node");
+    const result = spawnSync(nodeExecutable, [postflight], {
       cwd: controlDir,
       env,
       encoding: "utf-8",
