@@ -376,8 +376,8 @@ export class Runner {
             const isErr = event.isError ?? false;
             const toolName = event.toolName ?? "";
             if (isErr) {
-              const errResult = toolName === "submit_plan"
-                ? "submit_plan validation failed (<redacted>)"
+              const errResult = config.executionPolicy === "prepare-restricted"
+                ? (toolName === "submit_plan" ? "submit_plan validation failed (<redacted>)" : "restricted tool error")
                 : truncateLogText(stringifyLogValue(event.result));
               logEvent({
                 category: "agent",
