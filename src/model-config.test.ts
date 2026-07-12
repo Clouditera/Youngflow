@@ -120,6 +120,8 @@ describe("resolveModelConfig", () => {
       expect(config.compactionExtensionPath).toBe(path.join(config.agentDir, "yf-compaction.ts"));
       const extSource = readFileSync(config.compactionExtensionPath, "utf-8");
       expect(extSource).toContain("export default function youngflowCompactionExtension");
+      expect(extSource).not.toContain("[native code]");
+      expect(extSource).toContain("YOUNGFLOW_COMPACT_AT");
       expect(extSource).not.toMatch(/^import\s/m);
     } finally {
       rmSync(dir, { recursive: true, force: true });
