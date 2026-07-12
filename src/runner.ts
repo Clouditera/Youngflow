@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { setMaxListeners } from "node:events";
 setMaxListeners(0);
-import { spawn, execSync } from "node:child_process";
+import { spawn, spawnSync, execSync } from "node:child_process";
 import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
@@ -256,7 +256,14 @@ export class Runner {
         env,
         cwd: config.workDir ?? undefined,
         stdio: ["ignore", "pipe", "pipe"],
+        detached: config.executionPolicy === "prepare-restricted",
       });
+      const killProcess = () => {
+        if (config.executionPolicy === "prepare-restricted" && proc.pid) {
+          try { process.kill(-proc.pid, "SIGKILL"); return; } catch { /* process already gone */ }
+        }
+        try { proc.kill("SIGKILL"); } catch { /* process already gone */ }
+      };
 
       const toolCalls: string[] = [];
       let turnCount = 0;
@@ -273,25 +280,38 @@ export class Runner {
 
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      let aborted = false;
+      let timedOut = false;
+      let idleTimedOut = false;
+      let policyKilled = false;
+      let processErrored = false;
 
       const resetIdle = () => {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           logEvent({ category: "agent", event: "idle_timeout", stage: stageId, timeout_s: idleTimeoutSec });
-          if (config.executionPolicy === "prepare-restricted") cleanupRestrictedPrepareOutput(env);
-          proc.kill();
+          if (config.executionPolicy === "prepare-restricted") {
+            idleTimedOut = true;
+            cleanupRestrictedPrepareOutput(env);
+          }
+          killProcess();
         }, idleTimeoutSec * 1000);
       };
 
       const abortProcess = () => {
-        proc.kill();
+        aborted = true;
+        if (config.executionPolicy === "prepare-restricted") cleanupRestrictedPrepareOutput(env);
+        killProcess();
       };
 
       const idleTimeoutSec = config.executionPolicy === "prepare-restricted" ? 90 : this.engineConfig.idleTimeout;
       timeoutTimer = setTimeout(() => {
         logEvent({ category: "agent", event: "timeout", stage: stageId, timeout_s: config.timeout });
-        if (config.executionPolicy === "prepare-restricted") cleanupRestrictedPrepareOutput(env);
-        proc.kill();
+        if (config.executionPolicy === "prepare-restricted") {
+          timedOut = true;
+          cleanupRestrictedPrepareOutput(env);
+        }
+        killProcess();
       }, config.timeout * 1000);
 
       if (config.abortSignal) setMaxListeners(0, config.abortSignal);
@@ -326,8 +346,9 @@ export class Runner {
             turnCount++;
             if (config.executionPolicy === "prepare-restricted" && turnCount > 24) {
               lastError = "prepare turn budget exceeded";
+              policyKilled = true;
               cleanupRestrictedPrepareOutput(env);
-              proc.kill();
+              killProcess();
             }
             handler?.onTurnStart(turnCount, elapsedS);
           } else if (eventType === "tool_execution_start") {
@@ -336,8 +357,9 @@ export class Runner {
             toolCalls.push(toolName);
             if (config.executionPolicy === "prepare-restricted" && !PREPARE_TOOL_ALLOWLIST.has(toolName)) {
               lastError = "unauthorized prepare tool";
+              policyKilled = true;
               cleanupRestrictedPrepareOutput(env);
-              proc.kill();
+              killProcess();
             }
             const summary = formatRestrictedToolArgsSummary(toolName, args);
             logEvent({
@@ -395,8 +417,9 @@ export class Runner {
             if (config.executionPolicy === "prepare-restricted"
               && (Math.max(totalTokens, totalIn + totalOut + totalCacheRead + totalCacheWrite) > 200_000 || totalOut > 24_000)) {
               lastError = "prepare token budget exceeded";
+              policyKilled = true;
               cleanupRestrictedPrepareOutput(env);
-              proc.kill();
+              killProcess();
             }
 
             const stopReason = msg.stopReason ?? "";
@@ -423,7 +446,7 @@ export class Runner {
             const attempt = event.attempt ?? retries;
             const maxAttempts = event.maxAttempts ?? "?";
             const delay = event.delayMs ?? 0;
-            const err = event.errorMessage ?? "";
+            const err = config.executionPolicy === "prepare-restricted" ? "provider retry" : (event.errorMessage ?? "");
             logEvent({
               category: "agent",
               event: "auto_retry",
@@ -439,7 +462,7 @@ export class Runner {
             if (success) {
               debug("runner", "info", "[%s] [%ss] ✓ retry %s succeeded", stageId, elapsedS.toFixed(0), attempt);
             } else {
-              const finalErr = event.finalError ?? "";
+              const finalErr = config.executionPolicy === "prepare-restricted" ? "provider retries exhausted" : (event.finalError ?? "");
               debug("runner", "error", "[%s] [%ss] ❌ retries exhausted: %s", stageId, elapsedS.toFixed(0), finalErr);
             }
           } else if (eventType === "extension_error") {
@@ -454,7 +477,7 @@ export class Runner {
         stderrData += chunk.toString("utf-8");
       });
 
-      proc.on("close", (code) => {
+      proc.on("close", (code, signal) => {
         if (idleTimer) clearTimeout(idleTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         config.abortSignal?.removeEventListener("abort", abortProcess);
@@ -482,15 +505,28 @@ export class Runner {
           exportSessionMarkdown(sessionFile, { stageId });
         }
 
+        const submitEvents = toolCalls.filter((tool) => tool === "submit_plan").length;
         const policyFailed = config.executionPolicy === "prepare-restricted"
-          && (turnCount > 24
+          && (code !== 0
+            || signal != null
+            || aborted
+            || timedOut
+            || idleTimedOut
+            || policyKilled
+            || processErrored
+            || turnCount > 24
             || totalOut > 24_000
             || Math.max(totalTokens, totalIn + totalOut + totalCacheRead + totalCacheWrite) > 200_000
             || toolCalls.some((tool) => !PREPARE_TOOL_ALLOWLIST.has(tool))
-            || !verifyRestrictedPrepareArtifacts(env));
-        if (policyFailed) cleanupRestrictedPrepareOutput(env);
+            || submitEvents < 1
+            || submitEvents > 3
+            || !verifyRestrictedPrepareArtifacts(env, config, submitEvents));
+        if (config.executionPolicy === "prepare-restricted") {
+          if (policyFailed) cleanupRestrictedPrepareOutput(env);
+          cleanupRestrictedPrepareControl(env);
+        }
         const result: RunResult = {
-          exitCode: policyFailed ? 3 : (code ?? 0),
+          exitCode: policyFailed ? 3 : (processErrored ? -1 : (code ?? 3)),
           durationMs,
           sessionFile: sessionFile ?? undefined,
           toolCalls,
@@ -531,25 +567,16 @@ export class Runner {
       });
 
       proc.on("error", (err) => {
-        logEvent({ category: "stage", event: "process_error", stage: stageId, error: String(err) });
+        processErrored = true;
+        lastError = config.executionPolicy === "prepare-restricted" ? "restricted process error" : String(err);
+        logEvent({ category: "stage", event: "process_error", stage: stageId, error: lastError });
         if (idleTimer) clearTimeout(idleTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         config.abortSignal?.removeEventListener("abort", abortProcess);
-        if (proc.exitCode === null) proc.kill();
-        resolve({
-          exitCode: -1,
-          durationMs: Date.now() - startMs,
-          toolCalls: [],
-          turns: 0,
-          tokensIn: 0,
-          tokensOut: 0,
-          tokensCacheRead: 0,
-          tokensCacheWrite: 0,
-          tokensTotal: 0,
-          apiErrors: 0,
-          retries: 0,
-          finalHasContent: false,
-        });
+        if (config.executionPolicy === "prepare-restricted") {
+          cleanupRestrictedPrepareOutput(env);
+          cleanupRestrictedPrepareControl(env);
+        }
       });
     });
   }
@@ -706,30 +733,52 @@ function readNoFollow(pathname: string, maxBytes: number): { bytes: Buffer; mode
   } finally { closeSync(fd); }
 }
 
-function verifyRestrictedPrepareArtifacts(env: NodeJS.ProcessEnv): boolean {
+function verifyRestrictedPrepareArtifacts(env: NodeJS.ProcessEnv, config: RunConfig, submitEvents: number): boolean {
   const outputDir = env.PREPARE_OUTPUT_DIR;
   const controlDir = env.PREPARE_CONTROL_DIR;
-  if (!outputDir || !controlDir) return false;
+  const extensionDir = config.extensions[0];
+  if (!outputDir || !controlDir || !extensionDir || submitEvents < 1 || submitEvents > 3) return false;
   try {
     if (readdirSync(outputDir).sort().join(",") !== "assessment-plan.json") return false;
     const plan = readNoFollow(path.join(outputDir, "assessment-plan.json"), 128 * 1024);
-    const receiptFile = readNoFollow(path.join(controlDir, "receipt.json"), 64 * 1024);
-    if (!plan || plan.mode !== 0o600 || !receiptFile || receiptFile.mode !== 0o600) return false;
-    const receipt = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(receiptFile.bytes));
-    const counters = receipt.counters;
-    const counterValues = counters && typeof counters === "object" ? Object.values(counters) : [];
-    return receipt.status === "committed"
-      && receipt.plan_sha256 === createHash("sha256").update(plan.bytes).digest("hex")
-      && counterValues.length === 8
-      && counterValues.every((value) => Number.isSafeInteger(value) && Number(value) >= 0);
+    if (!plan || plan.mode !== 0o600) return false;
+    const postflight = path.join(extensionDir, "postflight.mjs");
+    const result = spawnSync(process.execPath, [postflight], {
+      cwd: controlDir,
+      env,
+      encoding: "utf-8",
+      timeout: 30_000,
+      maxBuffer: 64 * 1024,
+    });
+    if (result.status !== 0 || result.signal != null || result.error) return false;
+    const verified = JSON.parse(result.stdout || "{}");
+    const counters = verified.counters;
+    return verified.ok === true
+      && verified.plan_sha256 === createHash("sha256").update(plan.bytes).digest("hex")
+      && Number.isSafeInteger(counters?.submitCalls)
+      && counters.submitCalls === submitEvents
+      && counters.submitCalls >= 1
+      && counters.submitCalls <= 3
+      && Number.isSafeInteger(counters?.totalCalls)
+      && counters.totalCalls >= counters.submitCalls;
   } catch { return false; }
 }
 
 function cleanupRestrictedPrepareOutput(env: NodeJS.ProcessEnv): void {
   const outputDir = env.PREPARE_OUTPUT_DIR;
   if (!outputDir) return;
-  rmSync(path.join(outputDir, "assessment-plan.json"), { force: true });
-  rmSync(path.join(outputDir, "assessment-plan.json.tmp"), { force: true });
+  try {
+    for (const name of readdirSync(outputDir)) rmSync(path.join(outputDir, name), { recursive: true, force: true });
+  } catch { /* dedicated output may already be gone */ }
+}
+
+function cleanupRestrictedPrepareControl(env: NodeJS.ProcessEnv): void {
+  const controlDir = env.PREPARE_CONTROL_DIR;
+  if (!controlDir) return;
+  for (const target of [env.PREPARE_PI_HOME, env.HOME, env.TMPDIR, path.join(controlDir, "runtime"), path.join(controlDir, "receipt.json")]) {
+    if (!target) continue;
+    try { rmSync(target, { recursive: true, force: true }); } catch { /* best effort; launcher removes the control root */ }
+  }
 }
 
 function sleep(ms: number): Promise<void> {

@@ -243,6 +243,7 @@ async function runFlow(
   }
 
   const spec = parseFlow(flowYaml, opts.until);
+  const restrictedPrepare = spec.stages.length === 1 && spec.stages[0]?.executionPolicy === "prepare-restricted";
 
   if (continueMode) {
     const preWorkspace = new Workspace(outputDir);
@@ -280,9 +281,9 @@ async function runFlow(
   const runMetadata: Record<string, any> = {
     run_id: createRunId(new Date(start)),
     mode: opts.resume ? "resume" : continueMode ? "continue" : "normal",
-    flow: flowYaml,
-    work_dir: workDir,
-    output_dir: outputDir,
+    flow: restrictedPrepare ? "prepare-restricted" : flowYaml,
+    work_dir: restrictedPrepare ? "<restricted>" : workDir,
+    output_dir: restrictedPrepare ? "<restricted>" : outputDir,
     model: orch.model,
     max_parallel: orch.maxParallel,
     recursion_limit: orch.recursionLimit,
@@ -322,16 +323,16 @@ async function runFlow(
   logEvent({
     category: "engine",
     event: "flow_start",
-    flow: flowYaml,
-    work_dir: workDir,
-    output_dir: outputDir,
+    flow: restrictedPrepare ? "prepare-restricted" : flowYaml,
+    work_dir: restrictedPrepare ? "<restricted>" : workDir,
+    output_dir: restrictedPrepare ? "<restricted>" : outputDir,
     model: orch.model,
     max_parallel: orch.maxParallel,
     resume: !!opts.resume,
   });
 
   log(`🔍 YoungFlow v${VERSION}`);
-  log(`   Flow:     ${flowYaml}`);
+  log(`   Flow:     ${restrictedPrepare ? "prepare-restricted" : flowYaml}`);
   for (const [k, v] of Object.entries(flowInputs)) {
     log(`   ${k}: ${v}`);
   }
@@ -418,8 +419,8 @@ async function runFlow(
 
   const reportPath = report.refresh(spec, orch.workspace);
   if (reportPath) log(`\n📊 Report: ${reportPath}`);
-  log(`📂 Output: ${outputDir}`);
-  log(`📝 Log:    ${orch.workspace.flowLog}`);
+  log(`📂 Output: ${restrictedPrepare ? "<restricted>" : outputDir}`);
+  log(`📝 Log:    ${restrictedPrepare ? "<ephemeral>" : orch.workspace.flowLog}`);
 }
 
 function listStages(

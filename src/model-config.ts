@@ -45,14 +45,18 @@ export function resolveModelConfig(
     inheritGlobalAuth,
   });
 
-  debug(
-    "model_config",
-    "info",
-    "Model config: model=%s agentDir=%s modelsJson=%s",
-    defaultModel,
-    agentDir,
-    modelsJsonPath ?? "(empty)",
-  );
+  if (inheritGlobalAuth === false) {
+    debug("model_config", "info", "Restricted model config initialized");
+  } else {
+    debug(
+      "model_config",
+      "info",
+      "Model config: model=%s agentDir=%s modelsJson=%s",
+      defaultModel,
+      agentDir,
+      modelsJsonPath ?? "(empty)",
+    );
+  }
 
   return {
     modelString: defaultModel,
@@ -144,34 +148,36 @@ export function precheckModels(
   referencedModels: readonly string[],
   agentDir: string,
   env: Record<string, string>,
+  options: { replaceEnv?: boolean; redactErrors?: boolean } = {},
 ): void {
   const wanted = [...new Set(referencedModels.map(stripEffortSuffix).filter(Boolean))];
   if (wanted.length === 0) return;
 
   const res = spawnSync("pi", ["--list-models"], {
-    env: { ...process.env, ...env, PI_CODING_AGENT_DIR: agentDir },
+    env: { ...(options.replaceEnv ? {} : process.env), ...env, PI_CODING_AGENT_DIR: agentDir },
     encoding: "utf-8",
     timeout: 30_000,
   });
 
   if (res.error) {
-    throw new Error(`Model precheck failed to run pi --list-models: ${res.error.message}`);
+    throw new Error(options.redactErrors ? "Model precheck failed to run" : `Model precheck failed to run pi --list-models: ${res.error.message}`);
   }
 
   const stdout = res.stdout ?? "";
   const stderr = res.stderr ?? "";
   if (stderr.includes("errors loading models.json")) {
-    throw new Error(`Invalid models.json:\n${stderr.trim()}`);
+    throw new Error(options.redactErrors ? "Invalid restricted model configuration" : `Invalid models.json:\n${stderr.trim()}`);
   }
   if ((res.status ?? 0) !== 0) {
-    throw new Error(
-      `Model precheck failed (pi --list-models exit ${res.status}):\n${(stderr || stdout).trim()}`,
-    );
+    throw new Error(options.redactErrors
+      ? `Model precheck failed (exit ${res.status ?? "unknown"})`
+      : `Model precheck failed (pi --list-models exit ${res.status}):\n${(stderr || stdout).trim()}`);
   }
 
   const available = parseListModels(`${stdout}\n${stderr}`);
   const missing = wanted.filter((m) => !available.has(m));
   if (missing.length > 0) {
+    if (options.redactErrors) throw new Error("Restricted model unavailable");
     const preview = [...available].sort().slice(0, 10).join(", ") || "none";
     throw new Error(
       `Model(s) unavailable: ${missing.join(", ")}. ` +

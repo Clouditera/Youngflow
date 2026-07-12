@@ -6,6 +6,7 @@
  */
 
 import { setMaxListeners } from "node:events";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { Annotation, StateGraph, Send, END, START } from "@langchain/langgraph";
 import { Checkpoint } from "./checkpoint.js";
@@ -146,6 +147,38 @@ function collectReferencedModels(spec: FlowSpec): string[] {
   ])];
 }
 
+function within(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function mountPath(value: string): string {
+  return value.replace(/\\040/g, " ").replace(/\\011/g, "\t").replace(/\\134/g, "\\");
+}
+
+export function assertRestrictedPrepareDirectories(workDir?: string, outputDir?: string): void {
+  const source = process.env.PREPARE_SOURCE_ROOT;
+  const control = process.env.PREPARE_CONTROL_DIR;
+  const durable = process.env.PREPARE_OUTPUT_DIR;
+  if (!source || !control || !durable) throw new Error("prepare-restricted requires source/control/output directories");
+  const roots = [source, control, durable].map((value) => realpathSync(value));
+  if (roots.some((value) => !statSync(value).isDirectory())) throw new Error("prepare-restricted directories must be directories");
+  for (let left = 0; left < roots.length; left++) {
+    for (let right = left + 1; right < roots.length; right++) {
+      if (within(roots[left], roots[right]) || within(roots[right], roots[left])) throw new Error("prepare-restricted directories must be disjoint");
+    }
+  }
+  const requestedWork = realpathSync(workDir ?? process.cwd());
+  const requestedOutput = realpathSync(outputDir ?? workDir ?? process.cwd());
+  if (requestedWork !== roots[1] || requestedOutput !== roots[1]) throw new Error("prepare-restricted workspace must equal control directory");
+
+  const mounts = readFileSync("/proc/self/mountinfo", "utf-8").trim().split("\n").map((line) => {
+    const fields = line.split(" ");
+    return { point: mountPath(fields[4] ?? ""), options: (fields[5] ?? "").split(",") };
+  }).filter((entry) => within(entry.point, roots[0])).sort((a, b) => b.point.length - a.point.length);
+  if (!mounts[0]?.options.includes("ro")) throw new Error("prepare-restricted source must be a read-only mount");
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
@@ -195,6 +228,10 @@ export class Orchestrator {
     this.maxParallel = opts.maxParallel ?? resolvedSpec.defaultMaxParallel;
     this.onReportRefresh = opts.onReportRefresh;
 
+    const restrictedPrepare = resolvedSpec.stages.length === 1
+      && resolvedSpec.stages[0]?.executionPolicy === "prepare-restricted";
+    if (restrictedPrepare) assertRestrictedPrepareDirectories(opts.workDir, opts.outputDir);
+
     this.workspace = new Workspace(opts.outputDir ?? opts.workDir ?? ".");
     this.workspace.setup();
 
@@ -202,8 +239,6 @@ export class Orchestrator {
 
     // Build runner. Restricted Prepare creates its pi config only inside the
     // private control directory and never imports global subscription auth.
-    const restrictedPrepare = resolvedSpec.stages.length === 1
-      && resolvedSpec.stages[0]?.executionPolicy === "prepare-restricted";
     const prepareControlDir = restrictedPrepare ? process.env.PREPARE_CONTROL_DIR : undefined;
     if (restrictedPrepare && !prepareControlDir) throw new Error("prepare-restricted requires PREPARE_CONTROL_DIR");
     const modelConfig = resolveModelConfig(
@@ -218,7 +253,12 @@ export class Orchestrator {
       const precheckEnv = restrictedPrepare
         ? buildRestrictedPrepareEnv(process.env, modelConfig.envVars, {}, resolvedSpec.defaultModel)
         : modelConfig.envVars;
-      precheckModels(collectReferencedModels(resolvedSpec), modelConfig.agentDir, precheckEnv);
+      precheckModels(
+        collectReferencedModels(resolvedSpec),
+        modelConfig.agentDir,
+        precheckEnv,
+        restrictedPrepare ? { replaceEnv: true, redactErrors: true } : {},
+      );
     }
     const engineConfig = engineConfigFromEnv(rawEnv);
     this.runner = new Runner({
