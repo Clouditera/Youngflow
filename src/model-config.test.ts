@@ -64,6 +64,78 @@ describe("resolveModelConfig", () => {
     }
   });
 
+  it("writes pi internal retry settings from both env vars", () => {
+    const dir = tmpDir("retry-both");
+    try {
+      const config = resolveModelConfig({
+        YOUNGFLOW_PI_RETRY_MAX_RETRIES: "8",
+        YOUNGFLOW_PI_RETRY_BASE_DELAY_MS: "5000",
+      }, "anthropic/claude", dir);
+
+      expect(readJson(path.join(config.agentDir, "settings.json"))).toEqual({
+        retry: { maxRetries: 8, baseDelayMs: 5000 },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows retry env vars independently and accepts zero retries", () => {
+    const cases = [
+      [{ YOUNGFLOW_PI_RETRY_MAX_RETRIES: "0" }, { retry: { maxRetries: 0 } }],
+      [{ YOUNGFLOW_PI_RETRY_BASE_DELAY_MS: "2500" }, { retry: { baseDelayMs: 2500 } }],
+    ] as const;
+
+    for (const [env, expected] of cases) {
+      const dir = tmpDir("retry-independent");
+      try {
+        const config = resolveModelConfig({ ...env }, "anthropic/claude", dir);
+        expect(readJson(path.join(config.agentDir, "settings.json"))).toEqual(expected);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("rejects invalid pi internal retry env values", () => {
+    for (const [name, value] of [
+      ["YOUNGFLOW_PI_RETRY_MAX_RETRIES", "-1"],
+      ["YOUNGFLOW_PI_RETRY_MAX_RETRIES", "1.5"],
+      ["YOUNGFLOW_PI_RETRY_BASE_DELAY_MS", ""],
+      ["YOUNGFLOW_PI_RETRY_BASE_DELAY_MS", "many"],
+    ]) {
+      const dir = tmpDir("retry-invalid");
+      try {
+        expect(() => resolveModelConfig({ [name]: value }, "anthropic/claude", dir)).toThrow(name);
+        try {
+          resolveModelConfig({ [name]: value }, "anthropic/claude", dir);
+        } catch (error) {
+          expect(String(error)).toContain(JSON.stringify(value));
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("merges pi internal retry settings with compaction settings", () => {
+    const dir = tmpDir("retry-compaction");
+    try {
+      const config = resolveModelConfig({ YOUNGFLOW_PI_RETRY_MAX_RETRIES: "6" }, "anthropic/claude", dir, undefined, undefined, {
+        enabled: true,
+        reserveTokens: 40000,
+        keepRecentTokens: 12000,
+      });
+
+      expect(readJson(path.join(config.agentDir, "settings.json"))).toEqual({
+        compaction: { enabled: true, reserveTokens: 40000, keepRecentTokens: 12000 },
+        retry: { maxRetries: 6 },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("inherits subscription auth from the global pi agent dir", () => {
     const dir = tmpDir("auth-inherit");
     const prevGlobalAuth = process.env.PI_GLOBAL_AUTH_JSON;

@@ -602,6 +602,10 @@ extensions/output-contract/
 |------|--------|------|
 | `YOUNGFLOW_IDLE_TIMEOUT` | 300 | pi 进程无输出超时秒数 |
 | `YOUNGFLOW_EXPORT_SESSIONS` | 1 | 是否自动导出会话 HTML |
+| `YOUNGFLOW_PI_RETRY_MAX_RETRIES` | pi 默认 | pi 内部同一 turn 最大重试次数，不含首次调用；`0` 表示不做内部重试 |
+| `YOUNGFLOW_PI_RETRY_BASE_DELAY_MS` | pi 默认 | pi 内部指数退避起始毫秒数（例如 `5000` → 5s / 10s / 20s） |
+
+两个 pi retry 变量可独立配置，未设置的字段不会覆盖 pi 默认值；值必须是非负整数。它们只调整 pi 内部同一 turn 的 API error retry，不改变 YoungFlow 外层 empty/error retry。
 
 ## 模型凭证配置
 

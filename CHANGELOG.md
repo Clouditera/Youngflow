@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3 - 2026-07-13
+
+### Added
+- Add `YOUNGFLOW_PI_RETRY_MAX_RETRIES` and `YOUNGFLOW_PI_RETRY_BASE_DELAY_MS` to tune pi's internal same-turn API retry settings from the process environment or flow `.env`.
+
 ## 0.8.2 - 2026-07-13
 
 ### Changed

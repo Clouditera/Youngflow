@@ -23,6 +23,14 @@ import path from "node:path";
 import { debug } from "./logger.js";
 import type { CompactionSpec } from "./spec.js";
 
+const PI_RETRY_MAX_RETRIES_ENV = "YOUNGFLOW_PI_RETRY_MAX_RETRIES";
+const PI_RETRY_BASE_DELAY_MS_ENV = "YOUNGFLOW_PI_RETRY_BASE_DELAY_MS";
+
+interface PiRetrySettings {
+  readonly maxRetries?: number;
+  readonly baseDelayMs?: number;
+}
+
 export interface ModelConfig {
   readonly modelString: string;
   readonly thinkingLevel: string | undefined;
@@ -39,11 +47,13 @@ export function resolveModelConfig(
   modelsJsonPath?: string,
   compaction?: CompactionSpec,
 ): ModelConfig {
+  const piRetry = parsePiRetrySettings({ ...process.env, ...env });
   const agentDirInfo = createAgentDir({
     base: agentDirBase,
     agentsDir,
     modelsJsonPath,
     compaction,
+    piRetry,
   });
   const agentDir = agentDirInfo.agentDir;
 
@@ -73,6 +83,7 @@ function createAgentDir(opts: {
   agentsDir?: string;
   modelsJsonPath?: string;
   compaction?: CompactionSpec;
+  piRetry?: PiRetrySettings;
 }): { agentDir: string; compactionExtensionPath: string } {
   const agentDir = path.join(opts.base ?? process.cwd(), ".pi-agent");
   mkdirSync(agentDir, { recursive: true });
@@ -98,7 +109,7 @@ function createAgentDir(opts: {
   const settingsPath = path.join(agentDir, "settings.json");
   writeFileSync(
     settingsPath,
-    JSON.stringify(buildPiSettings(opts.compaction), null, 2) + "\n",
+    JSON.stringify(buildPiSettings(opts.compaction, opts.piRetry), null, 2) + "\n",
     "utf-8",
   );
 
@@ -120,15 +131,48 @@ function createAgentDir(opts: {
   return { agentDir, compactionExtensionPath };
 }
 
-function buildPiSettings(compaction?: CompactionSpec): Record<string, unknown> {
-  if (!compaction) return {};
+function buildPiSettings(
+  compaction?: CompactionSpec,
+  piRetry?: PiRetrySettings,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  const c: Record<string, unknown> = {};
-  if (compaction.enabled !== undefined) c.enabled = compaction.enabled;
-  if (compaction.reserveTokens !== undefined) c.reserveTokens = compaction.reserveTokens;
-  if (compaction.keepRecentTokens !== undefined) c.keepRecentTokens = compaction.keepRecentTokens;
-  out.compaction = c;
+  if (compaction) {
+    const c: Record<string, unknown> = {};
+    if (compaction.enabled !== undefined) c.enabled = compaction.enabled;
+    if (compaction.reserveTokens !== undefined) c.reserveTokens = compaction.reserveTokens;
+    if (compaction.keepRecentTokens !== undefined) c.keepRecentTokens = compaction.keepRecentTokens;
+    out.compaction = c;
+  }
+  if (piRetry && (piRetry.maxRetries !== undefined || piRetry.baseDelayMs !== undefined)) {
+    const retry: Record<string, number> = {};
+    if (piRetry.maxRetries !== undefined) retry.maxRetries = piRetry.maxRetries;
+    if (piRetry.baseDelayMs !== undefined) retry.baseDelayMs = piRetry.baseDelayMs;
+    out.retry = retry;
+  }
   return out;
+}
+
+function parsePiRetrySettings(env: Record<string, string | undefined>): PiRetrySettings | undefined {
+  const maxRetries = parseNonNegativeIntegerEnv(env, PI_RETRY_MAX_RETRIES_ENV);
+  const baseDelayMs = parseNonNegativeIntegerEnv(env, PI_RETRY_BASE_DELAY_MS_ENV);
+  if (maxRetries === undefined && baseDelayMs === undefined) return undefined;
+  return { maxRetries, baseDelayMs };
+}
+
+function parseNonNegativeIntegerEnv(
+  env: Record<string, string | undefined>,
+  name: string,
+): number | undefined {
+  const raw = env[name];
+  if (raw === undefined) return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid env var ${name}=${JSON.stringify(raw)}: expected a non-negative integer`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`Invalid env var ${name}=${JSON.stringify(raw)}: expected a non-negative safe integer`);
+  }
+  return value;
 }
 
 /**

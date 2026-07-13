@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveEnvRefs, resolveModelEnvReferences } from "./env-interpolation.js";
@@ -158,6 +158,34 @@ describe("model env interpolation integration", () => {
       expect(orch.spec.stages[0].model).toBe("deepseek/deepseek-v4-flash");
     } finally {
       process.env.PATH = oldPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads pi internal retry settings from the flow .env", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "youngflow-env-pi-retry-"));
+    try {
+      mkdirSync(path.join(dir, "agents"), { recursive: true });
+      writeFileSync(path.join(dir, "agents", "agent.md"), "agent\n", "utf-8");
+      writeFileSync(path.join(dir, ".env"), [
+        "YOUNGFLOW_PI_RETRY_MAX_RETRIES=8",
+        "YOUNGFLOW_PI_RETRY_BASE_DELAY_MS=5000",
+      ].join("\n"), "utf-8");
+      writeFileSync(path.join(dir, "flow.yaml"), [
+        'version: "1.0"',
+        "defaults:",
+        "  agent: agent.md",
+        "stages:",
+        "  - id: scan",
+      ].join("\n"), "utf-8");
+
+      const parsed = parseFlow(path.join(dir, "flow.yaml"));
+      new Orchestrator(parsed, {}, { outputDir: path.join(dir, "out"), skipModelPrecheck: true });
+
+      expect(JSON.parse(readFileSync(path.join(dir, ".pi-agent", "settings.json"), "utf-8"))).toEqual({
+        retry: { maxRetries: 8, baseDelayMs: 5000 },
+      });
+    } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
