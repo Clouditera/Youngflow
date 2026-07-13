@@ -402,6 +402,64 @@ describe("parseFlow", () => {
     expect(() => parseFlow(flowPath)).toThrow(/recursion_limit/);
   });
 
+  it("allows all execution node types to omit skills", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: single_node",
+      "  - id: map_node",
+      "    type: map",
+      "    over: items/*.yaml",
+      "  - id: parallel_node",
+      "    type: parallel",
+      "    tasks:",
+      "      - id: child",
+      "  - id: join_node",
+      "    type: join",
+    ].join("\n"));
+
+    const spec = parseFlow(flowPath);
+    expect(spec.stages.map((stage) => stage.skills)).toEqual([[], [], [], []]);
+    expect(spec.stages[2].tasks[0].skills).toEqual([]);
+  });
+
+  it("still rejects an explicitly empty skills list", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: []",
+    ].join("\n"));
+
+    expect(() => parseFlow(flowPath)).toThrow(/skills/);
+  });
+
+  it("keeps validating explicitly referenced top-level skills", () => {
+    const dir = makeFlowDir();
+    tmpDirs.push(dir);
+    const flowPath = path.join(dir, "flow.yaml");
+    writeFileSync(flowPath, [
+      'version: "1.0"',
+      "defaults:",
+      "  agent: agent.md",
+      "stages:",
+      "  - id: first",
+      "    skills: [missing-skill]",
+    ].join("\n"));
+
+    expect(() => parseFlow(flowPath)).toThrow(/skill dir not found: missing-skill/);
+  });
+
   it("accepts join stages without skills", () => {
     const dir = makeFlowDir();
     tmpDirs.push(dir);

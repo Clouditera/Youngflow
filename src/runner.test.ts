@@ -115,6 +115,50 @@ describe("Runner command construction", () => {
     expect(cmd).not.toContain("deepseek/deepseek-v4-pro:medium");
   });
 
+  it("disables automatic skills and omits explicit --skill for zero-skill nodes", () => {
+    const runner = new Runner({
+      modelConfig: {
+        modelString: "zai/glm-5.1",
+        agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
+        envVars: {},
+      },
+      engineConfig: {
+        errorRetries: 0,
+        errorRetryBackoff: 1,
+        idleTimeout: 60,
+        exportSessions: false,
+      },
+      systemPromptPath: "/tmp/system.md",
+    });
+
+    const cmd = (runner as any).buildCommand(defaultRunConfig({ task: "do it", skillDirs: [] })) as string[];
+    expect(cmd).toContain("--no-skills");
+    expect(cmd).not.toContain("--skill");
+  });
+
+  it("passes explicitly configured skill directories", () => {
+    const runner = new Runner({
+      modelConfig: {
+        modelString: "zai/glm-5.1",
+        agentDir: "/tmp/.pi-agent",
+        compactionExtensionPath: "/tmp/.pi-agent/yf-compaction.ts",
+        envVars: {},
+      },
+      engineConfig: {
+        errorRetries: 0,
+        errorRetryBackoff: 1,
+        idleTimeout: 60,
+        exportSessions: false,
+      },
+      systemPromptPath: "/tmp/system.md",
+    });
+
+    const cmd = (runner as any).buildCommand(defaultRunConfig({ task: "do it", skillDirs: ["/flow/skills/test-skill"] })) as string[];
+    expect(cmd).toContain("--no-skills");
+    expect(cmd[cmd.indexOf("--skill") + 1]).toBe("/flow/skills/test-skill");
+  });
+
   it("passes explicit tools allowlist", () => {
     const runner = new Runner({
       modelConfig: {

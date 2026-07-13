@@ -200,6 +200,38 @@ describe("Executor session reuse", () => {
     }
   });
 
+  it("executes a zero-skill node without explicit skill directories", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-zero-skills-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "child", skills: [] }));
+
+      expect(runner.configs[0].skillDirs).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps passing explicitly configured skill directories", async () => {
+    const dir = path.join(os.tmpdir(), `youngflow-exec-explicit-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      const ws = new Workspace(path.join(dir, "out"));
+      ws.setup();
+      const runner = new CapturingRunner();
+      const executor = new Executor(runner as any, makeSpec(dir), ws, dir, {});
+
+      await executor.execute(makeStage({ id: "child", skills: ["test-skill"] }));
+
+      expect(runner.configs[0].skillDirs).toEqual([path.join(dir, "skills", "test-skill")]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("uses own stage tools before defaults", async () => {
     const dir = path.join(os.tmpdir(), `youngflow-exec-tools-own-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     try {

@@ -422,12 +422,6 @@ function validateSemantics(
 
     const stageType = stage.type ?? "single";
 
-    if ((stageType === "single" || stageType === "map") && !stage.skills?.length) {
-      errors.push(
-        `[semantic] ${prefix}: skills is required for type '${stageType}'`,
-      );
-    }
-
     if (stageType === "parallel") {
       const tasks = stage.tasks ?? [];
       if (tasks.length === 0) {
@@ -437,9 +431,6 @@ function validateSemantics(
         const task = tasks[j];
         const tid = task.id ?? "";
         const tprefix = `${prefix}.tasks[${j}] (${tid || "?"})`;
-        if (!task.skills?.length) {
-          errors.push(`[semantic] ${tprefix}: skills is required`);
-        }
         if (allTaskIds.has(tid)) {
           errors.push(`[semantic] ${tprefix}: duplicate task id '${tid}'`);
         }

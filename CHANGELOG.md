@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 - 2026-07-13
+
+### Changed
+- Allow all execution nodes, including top-level single/map stages and parallel child tasks, to omit `skills`. Explicit non-empty skill lists continue to load normally.
+
 ## 0.8.1 - 2026-07-03
 
 ### Changed

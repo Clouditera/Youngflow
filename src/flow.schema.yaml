@@ -333,7 +333,7 @@ $defs:
 
   task:
     type: object
-    required: [id, skills]
+    required: [id]
     properties:
       id:
         type: string
