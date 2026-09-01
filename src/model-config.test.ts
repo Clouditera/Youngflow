@@ -312,5 +312,14 @@ describe("stripEffortSuffix", () => {
   it("strips known effort suffixes only", () => {
     expect(stripEffortSuffix("anthropic/claude:high")).toBe("anthropic/claude");
     expect(stripEffortSuffix("myprov/model:custom")).toBe("myprov/model:custom");
+    expect(stripEffortSuffix("openrouter/z-ai/glm-4.5:free")).toBe("openrouter/z-ai/glm-4.5:free");
+    expect(stripEffortSuffix("ollama/qwen2.5:7b")).toBe("ollama/qwen2.5:7b");
+  });
+
+  it("strips pi effort levels added after 0.8.3 (issue #28)", () => {
+    expect(stripEffortSuffix("platform/glm-5.3:max")).toBe("platform/glm-5.3");
+    expect(stripEffortSuffix("platform/glm-5.3:minimal")).toBe("platform/glm-5.3");
+    expect(stripEffortSuffix("platform/glm-5.3:off")).toBe("platform/glm-5.3");
+    expect(stripEffortSuffix("PLATFORM/GLM-5.3:MAX")).toBe("PLATFORM/GLM-5.3");
   });
 });

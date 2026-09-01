@@ -266,7 +266,7 @@ export function precheckModels(
 }
 
 export function stripEffortSuffix(model: string): string {
-  const knownEfforts = new Set(["low", "medium", "high", "xhigh", "none", "auto"]);
+  const knownEfforts = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "none", "auto"]);
   const idx = model.lastIndexOf(":");
   if (idx === -1) return model;
   const suffix = model.slice(idx + 1).toLowerCase();
