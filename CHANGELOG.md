@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4 - 2026-09-01
+
+### Fixed
+- Accept `off`, `minimal`, and `max` thinking effort levels in model references (e.g. `platform/glm-5.3:max`); the effort-suffix whitelist was missing these pi levels and model precheck rejected them (fixes #28).
+
 ## 0.8.3 - 2026-07-13
 
 ### Added
